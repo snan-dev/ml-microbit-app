@@ -150,3 +150,22 @@ export function deriveEnumIdentifiers(classNames) {
         return candidate;
     });
 }
+
+/**
+ * Display-only label for a class whose stored name is empty. Never stored,
+ * never sent over UART, never used for the MakeCode enum: it is 16 bytes and
+ * MAX_CLASS_NAME_BYTES is 15, so normalizeClassName() would store it as
+ * "Clase sin nombr" — and two new classes would then collide.
+ */
+export const UNNAMED_CLASS_LABEL = 'Clase sin nombre';
+
+/**
+ * The text to SHOW for a class name. Only for rendering: anything that gets
+ * stored, sent over UART or handed to openMakeCode() uses the raw name.
+ *
+ * @param {*} name
+ * @returns {string}
+ */
+export function displayClassName(name) {
+    return typeof name === 'string' && name.trim() !== '' ? name : UNNAMED_CLASS_LABEL;
+}

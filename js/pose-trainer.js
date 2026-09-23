@@ -17,6 +17,18 @@ const featureSize = 99; // 33 keypoints × 3 (x, y, z)
 // Classes and samples
 let classes = []; // [{name, samples: [{features: Float32Array, thumb: string}], count}]
 
+/**
+ * Los nombres de clase con los que se entrenó el `head` vigente, en el orden
+ * en que se entrenó. Es el mapeo salida→etiqueta, y no se toca al editar las
+ * clases: solo lo reescriben train() y loadSavedModel().
+ *
+ * Existe porque el modelo no conoce nombres, solo casilleros de salida
+ * numerados, y esa correspondencia queda congelada en los pesos. Etiquetar con
+ * `classes` —la lista viva— hace que borrar una clase sin reentrenar corra
+ * todos los nombres un lugar, y la placa reciba el de otra clase.
+ */
+let trainedClassNames = null;
+
 // Capture
 let captureIntervalId = null;
 
@@ -315,6 +327,8 @@ async function train(onProgress) {
 
     if (head) head.dispose();
     head = newHead;
+    // Congela el mapeo salida→etiqueta junto con el head que lo produjo.
+    trainedClassNames = classes.map(cls => cls.name);
 
     return { epochs: totalEpochs };
 }
@@ -333,6 +347,12 @@ async function predict(imageSource) {
     const features = extractKeypoints(imageSource, performance.now());
     if (!features) return [];
 
+    // Se lee junto con el head y ANTES del await: el par (head, etiquetas)
+    // tiene que ser atómico, o un train() que termine durante la lectura de
+    // datos etiquetaría las probabilidades del head viejo con los nombres
+    // nuevos.
+    const labels = trainedClassNames || classes.map(cls => cls.name);
+
     const prediction = tf.tidy(() => {
         const input = tf.tensor2d([Array.from(features)]);
         return head.predict(input);
@@ -341,10 +361,15 @@ async function predict(imageSource) {
     const probs = await prediction.data();
     prediction.dispose();
 
-    return classes.map((cls, i) => ({
-        className: cls.name,
-        probability: probs[i]
-    }));
+    // El largo lo manda `probs`, que es lo que el head devolvió: una etiqueta
+    // sin score produciría `probability: undefined`, que viaja en silencio
+    // hasta la UI como `NaN%` y hasta el UART como una clase fantasma.
+    const count = Math.min(labels.length, probs.length);
+    const result = [];
+    for (let i = 0; i < count; i++) {
+        result.push({ className: labels[i], probability: probs[i] });
+    }
+    return result;
 }
 
 // ============================================
@@ -353,14 +378,18 @@ async function predict(imageSource) {
 
 async function saveModel(projectId) {
     if (!head) throw new Error("No hay modelo entrenado");
+    if (!trainedClassNames) throw new Error("No hay modelo entrenado");
 
     const storageKey = poseModelKey(projectId);
     await head.save('indexeddb://' + storageKey);
 
     return {
         source: 'local-pose',
+        // La lista del head, no la viva: lo que se guarda tiene que describir
+        // al modelo que se está guardando, sin depender de que el llamador
+        // invoque saveModel() inmediatamente después de train().
+        classNames: [...trainedClassNames],
         storageKey,
-        classNames: classes.map(c => c.name),
         trainedAt: new Date().toISOString()
     };
 }
@@ -372,9 +401,32 @@ async function loadSavedModel(localModelInfo) {
         'indexeddb://' + localModelInfo.storageKey
     );
 
+    // `classNames` describe la lista EDITADA, no la entrenada: la frontera de
+    // rehidratación la resuelve con `project.classNames || localModel.classNames`
+    // y escribe el resultado adentro de localModel, así que desde la primera
+    // recarga trae las ediciones posteriores al entrenamiento.
+    // `trainedClassNames` es el campo que la frontera no conoce y preserva.
+    const trained = Array.isArray(localModelInfo.trainedClassNames)
+        && localModelInfo.trainedClassNames.length > 0
+        ? localModelInfo.trainedClassNames
+        : localModelInfo.classNames;
+
+    // El head es la autoridad sobre cuántas etiquetas hay. Un registro legado
+    // —entrenado antes de que se guardara trainedClassNames— y editado después
+    // cae acá: mejor rechazar el modelo que etiquetar con una lista corrida.
+    // openTrainingScreen() ya trata "el modelo no carga" como "necesita
+    // reentrenar", que es exactamente el estado correcto.
+    const outputs = head.outputShape[head.outputShape.length - 1];
+    if (trained.length !== outputs) {
+        head.dispose();
+        head = null;
+        throw new Error("El modelo guardado no coincide con sus clases");
+    }
+
     classes = localModelInfo.classNames.map(name => ({
         name, samples: [], count: 0
     }));
+    trainedClassNames = [...trained];
 }
 
 async function deleteModel(storageKey) {
@@ -501,6 +553,7 @@ function dispose() {
     lastLandmarks = null;
 
     if (head) { head.dispose(); head = null; }
+    trainedClassNames = null;
 
     // poseLandmarker is kept alive — expensive to recreate (~2-3s)
 }

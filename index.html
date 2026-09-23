@@ -105,14 +105,31 @@
                     <div class="classes-card">
                         <div class="training-classes-header">
                             <h3 class="training-classes-title">Clases</h3>
+                        </div>
+                        <!-- addClassBtn es el último elemento de la lista: cada
+                             render lo vuelve a mover al final con appendChild
+                             (placeAddClassButton() en app.js), lo que conserva
+                             su listener. -->
+                        <div class="classes-card-body" id="trainingClassesList">
                             <button class="add-class-header-btn" id="addClassBtn" title="Agregar clase">+ Nueva clase</button>
                         </div>
-                        <div class="classes-card-body" id="trainingClassesList"></div>
                         <div class="classes-card-footer">
-                            <button class="btn-primary" id="trainBtn" disabled>
-                                <span class="train-label">Entrenar</span>
-                                <span class="train-btn-pct" id="trainProgressText"></span>
-                            </button>
+                            <div class="classes-card-actions">
+                                <button class="btn-primary" id="trainBtn">
+                                    <span class="train-label">Entrenar</span>
+                                    <span class="train-btn-pct" id="trainProgressText"></span>
+                                </button>
+                                <!-- Aparece recién con un modelo entrenado en memoria;
+                                     antes no está, ni siquiera deshabilitado. Lo maneja
+                                     updateTrainButton() con modelReadyForProgramming. -->
+                                <button class="btn-secondary hidden" id="goProgramBtn">
+                                    Programar micro:bit
+                                </button>
+                            </div>
+                            <div id="trainBlockers" class="train-blockers hidden" role="status" aria-live="polite">
+                                <p class="train-blockers__title">Todavía no se puede entrenar:</p>
+                                <ul id="trainBlockersList" class="train-blockers__list"></ul>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -274,11 +291,14 @@
     </div>
 
     <!-- AUDIO RECORD COUNTDOWN MODAL -->
-    <div class="audio-record-modal hidden" id="audioRecordModal">
-        <button class="audio-record-cancel-btn" id="audioRecordCancelBtn" aria-label="Cancelar">×</button>
+    <div class="audio-record-modal hidden" id="audioRecordModal"
+         role="dialog" aria-modal="true" aria-labelledby="countdownLabel">
         <div class="audio-record-modal-content">
             <div class="countdown-number" id="countdownNumber">3</div>
             <div class="countdown-label" id="countdownLabel">Prepárate...</div>
+            <button type="button" class="audio-record-stop-btn" id="audioRecordStopBtn">
+                Detener toma de muestras
+            </button>
         </div>
     </div>
 

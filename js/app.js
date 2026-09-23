@@ -14,12 +14,25 @@ import { getConfig } from './trainer-config.js';
 import { escapeHtml } from './sanitize.js';
 import {
     MAX_CLASS_NAME_BYTES,
+    UNNAMED_CLASS_LABEL,
     byteLength,
     stripUnsafeChars,
     truncateToBytes,
     normalizeClassName,
-    isDuplicateClassName
+    isDuplicateClassName,
+    displayClassName
 } from './class-name.js';
+import {
+    MIN_CLASSES,
+    MIN_SAMPLES_PER_CLASS,
+    getTrainingBlockers,
+    getBlockedClassIndices,
+    formatBlocker,
+    classesSignature,
+    hasUntrainedChanges,
+    classNamesDiverged,
+    BLOCKER_MISSING_NAME
+} from './training-rules.js';
 
 let currentModel = null;
 
@@ -35,6 +48,64 @@ let predictionExpanded = false;
 
 let batchRecordingActive = false;
 let batchRecordingCancelled = false;
+
+// El botón "Nueva clase" vive dentro de #trainingClassesList, que se reescribe
+// con innerHTML en cada render y se vacía al salir de la pantalla. La
+// referencia se toma una sola vez acá: mover el nodo con appendChild conserva
+// su listener, así que nunca hay que volver a cablearlo.
+const addClassBtn = document.getElementById('addClassBtn');
+
+// Panel de "por qué todavía no se puede entrenar". Está fuera de la lista de
+// clases, así que estos nodos sobreviven a los renders.
+const trainBlockersPanel = document.getElementById('trainBlockers');
+const trainBlockersList = document.getElementById('trainBlockersList');
+let trainBlockersVisible = false;
+
+const goProgramBtn = document.getElementById('goProgramBtn');
+
+/**
+ * ¿Hay un modelo entrenado y usable EN MEMORIA para el proyecto abierto?
+ *
+ * Es lo que decide si aparece "Programar micro:bit" en la pantalla de
+ * entrenamiento y si el botón de entrenar dice "Reentrenar".
+ *
+ * NO se deriva de `isTrained()`: el de audio devuelve `true` en cuanto el
+ * recognizer tiene ejemplos, sin haber entrenado nunca. `wordLabels()` sale de
+ * `collateTransferWords()`, que speech-commands corre dentro de
+ * `loadExamples()` y de `collectExample()`, así que un proyecto de audio con
+ * muestras recuperadas y sin modelo lo reportaría como entrenado. Los de
+ * imagen y pose sí son fiables (`head !== null`), pero un solo origen de
+ * verdad para los tres es lo que hace que el botón no mienta.
+ */
+let modelReadyForProgramming = false;
+
+/**
+ * Huella de las clases con las que se entrenó el modelo del proyecto abierto,
+ * o `null` si no se sabe (proyecto guardado antes de que existiera la huella).
+ *
+ * Se persiste dentro de `localModel` para que la comparación sobreviva a
+ * cerrar y reabrir: las muestras se guardan solas, sin pasar por `train()`, así
+ * que al reabrir un proyecto lo guardado puede ser más nuevo que el modelo y no
+ * hay forma de notarlo sin haberlo anotado al entrenar.
+ */
+let trainedClassesSignature = null;
+
+/**
+ * Los nombres de clase con los que se entrenó, en el orden con que se entrenó.
+ *
+ * Va en `localModel.trainedClassNames` y NO en `localModel.classNames`, que no
+ * sirve para esto: `canonicalizeProject()` resuelve los nombres con
+ * `project.classNames || localModel.classNames` y escribe el resultado dentro
+ * de `localModel`, así que la lista editada pisa a la entrenada en la primera
+ * rehidratación. Un campo que la frontera no conoce se preserva tal cual.
+ */
+let trainedClassNames = null;
+
+// El botón Entrenar ya no se deshabilita por falta de clases ni de muestras,
+// así que el "hay un entrenamiento corriendo" necesita su propio flag: sin él,
+// cualquier updateTrainButton() disparado durante el entrenamiento lo
+// reactivaría.
+let trainingInProgress = false;
 
 // Persistencia de muestras con debounce. La captura sostenida corre a ~5 fps:
 // escribir en cada muestra serian cinco escrituras por segundo del dataset
@@ -144,7 +215,7 @@ function renderModels() {
                 </div>
             </div>
             <div class="model-card-title">${escapeHtml(model.name)}</div>
-            ${model.classNames ? `<div class="model-card-classes">${model.classNames.map(c => escapeHtml(c)).join(' · ')}</div>` : ''}
+            ${model.classNames ? `<div class="model-card-classes">${model.classNames.map(c => escapeHtml(displayClassName(c))).join(' · ')}</div>` : ''}
             <div class="model-card-date">${escapeHtml(formatDate(model.createdAt))}</div>
             <div class="model-card-actions">
                 <button class="btn-card btn-use" data-action="open" data-id="${escapeHtml(model.id)}">Abrir</button>
@@ -234,14 +305,25 @@ async function openPredictionScreen(model) {
     // Flip button only makes sense for camera models
     document.getElementById('predictionFlipBtn').style.display = isAudio ? 'none' : '';
 
-    batchRecordingActive = false;
+    // Solo se pide la cancelación: el dueño del ciclo de la tanda es
+    // finishRecordingBatch(), y es el único que apaga batchRecordingActive.
     batchRecordingCancelled = true;
+    hideTrainBlockers();
     stopPredictionLoop();
     audioTrainer.stopListening();
     audioTrainer.stopVisualizer();
     closeMakeCode('makecodeInlineFrame');
     closeCaptureWebcamSilent();
     disconnectMicrobit();
+
+    // Android no libera la cámara en el mismo tick: abrir la de predicción
+    // pegado al stop de la de captura devuelve un stream muerto. Misma pausa
+    // que usan flipCaptureCamera() y sus hermanas. Con #goProgramBtn este dejó
+    // de ser un camino excepcional: se viene de una sesión entera de captura
+    // con la cámara viva.
+    if (!isAudio) {
+        await new Promise(r => setTimeout(r, 250));
+    }
 
     const conn = document.getElementById('predictionConnectBtn');
     conn.classList.remove('connected');
@@ -286,7 +368,20 @@ async function openPredictionScreen(model) {
         return;
     }
 
-    const classNamesForMakeCode = model.classNames
+    // Las clases del MODELO ENTRENADO, no las de la pantalla de entrenamiento.
+    // Desde que se puede ir a programar sin reentrenar, las dos listas divergen
+    // a propósito: `model.classNames` sigue cada edición (incluida una clase
+    // recién creada, todavía sin nombre), y usarla generaría bloques para
+    // clases que el modelo no puede predecir — o un `//% block=""` mudo.
+    // `trainedClassNames` y no `localModel.classNames`: esta última no
+    // sobrevive a una rehidratación. `canonicalizeProject()` resuelve los
+    // nombres con `project.classNames || localModel.classNames` y escribe el
+    // resultado DENTRO de localModel, así que la lista editada pisa a la
+    // entrenada apenas se recarga. `trainedClassNames` es un campo que la
+    // frontera no conoce, y por eso lo preserva tal cual.
+    const classNamesForMakeCode = model.localModel?.trainedClassNames
+        || model.localModel?.classNames
+        || model.classNames
         || (isAudio ? audioTrainer.getClassNames()
             : isPose ? poseTrainer.getClassNames()
             : trainer.getClassNames());
@@ -337,6 +432,11 @@ async function openTrainingScreen(project) {
     closeMakeCode('makecodeInlineFrame');
     disconnectMicrobit();
     document.getElementById('trainProgressText').textContent = '';
+    hideTrainBlockers();
+    // Arranca en false y cada rama lo levanta si de verdad cargó un modelo.
+    modelReadyForProgramming = false;
+    trainedClassesSignature = project.localModel?.trainedSignature ?? null;
+    trainedClassNames = project.localModel?.trainedClassNames ?? null;
 
     trainingFacingMode = 'user';
     predictionExpanded = false;
@@ -386,10 +486,9 @@ async function openTrainingScreen(project) {
             if (modelLoaded) {
                 showToast('Cargando muestras anteriores...', 'info');
                 samplesLoaded = await poseTrainer.loadSamples(project.id);
-                if (poseTrainer.isTrained()) {
-                    await openPredictionScreen(project);
-                    return;
-                }
+                // Un proyecto entrenado abre en ENTRENAMIENTO, no salta a
+                // predicción: desde acá se puede ir a programar sin reentrenar.
+                modelReadyForProgramming = poseTrainer.isTrained();
                 showScreen('trainingScreen');
                 document.getElementById('trainingCaptureSection').classList.remove('hidden');
             } else if (hasPriorWork) {
@@ -404,8 +503,7 @@ async function openTrainingScreen(project) {
             } else {
                 showScreen('trainingScreen');
                 document.getElementById('trainingCaptureSection').classList.remove('hidden');
-                poseTrainer.addClass('Clase 1');
-                poseTrainer.addClass('Clase 2');
+                getConfig('pose').defaultClasses.forEach(name => poseTrainer.addClass(name));
                 persistClassNames();
             }
 
@@ -451,18 +549,17 @@ async function openTrainingScreen(project) {
                     }
                 }
 
-                if (modelLoaded) {
-                    await openPredictionScreen(project);
-                    return;
-                }
+                // Un proyecto entrenado abre en ENTRENAMIENTO, no salta a
+                // predicción: desde acá se puede ir a programar sin reentrenar.
+                // En audio el testigo es que loadSavedModel() haya andado, no
+                // isTrained(), que da true con solo tener muestras.
+                modelReadyForProgramming = modelLoaded;
                 showScreen('trainingScreen');
                 document.getElementById('trainingCaptureSection').classList.remove('hidden');
             } else {
                 showScreen('trainingScreen');
                 document.getElementById('trainingCaptureSection').classList.remove('hidden');
-                audioTrainer.addClass('Ruido de fondo');
-                audioTrainer.addClass('Clase 1');
-                audioTrainer.addClass('Clase 2');
+                getConfig('audio').defaultClasses.forEach(name => audioTrainer.addClass(name));
                 persistClassNames();
             }
 
@@ -503,10 +600,9 @@ async function openTrainingScreen(project) {
         if (modelLoaded) {
             showToast('Cargando muestras anteriores...', 'info');
             samplesLoaded = await trainer.loadSamples(project.id);
-            if (trainer.isTrained()) {
-                await openPredictionScreen(project);
-                return;
-            }
+            // Un proyecto entrenado abre en ENTRENAMIENTO, no salta a
+            // predicción: desde acá se puede ir a programar sin reentrenar.
+            modelReadyForProgramming = trainer.isTrained();
             showScreen('trainingScreen');
             document.getElementById('trainingCaptureSection').classList.remove('hidden');
         } else if (hasPriorWork) {
@@ -518,8 +614,7 @@ async function openTrainingScreen(project) {
         } else {
             showScreen('trainingScreen');
             document.getElementById('trainingCaptureSection').classList.remove('hidden');
-            trainer.addClass('Clase 1');
-            trainer.addClass('Clase 2');
+            getConfig('image').defaultClasses.forEach(name => trainer.addClass(name));
             persistClassNames();
         }
 
@@ -936,8 +1031,8 @@ function updateClassUI(classIndex) {
     // Progress bar (all trainers)
     const fill = card.querySelector('.sample-progress-fill');
     if (fill) {
-        fill.style.width = Math.min(100, (c.count / 8) * 100) + '%';
-        fill.classList.toggle('ready', c.count >= 8);
+        fill.style.width = Math.min(100, (c.count / MIN_SAMPLES_PER_CLASS) * 100) + '%';
+        fill.classList.toggle('ready', c.count >= MIN_SAMPLES_PER_CLASS);
     }
 
     const gallery = card.querySelector('.sample-gallery');
@@ -975,6 +1070,130 @@ function setActiveCard(cardElement) {
     }
 }
 
+// ============================================
+// LISTA DE CLASES: HELPERS COMPARTIDOS
+// ============================================
+
+function getClassCards() {
+    return Array.from(document.querySelectorAll('#trainingClassesList .training-class-card'));
+}
+
+function getClassCard(classIndex) {
+    if (!Number.isInteger(classIndex)) return null;
+    return document.querySelector(
+        `#trainingClassesList .training-class-card[data-index="${classIndex}"]`
+    );
+}
+
+/**
+ * Deja el botón "Nueva clase" como último elemento de la lista de clases.
+ *
+ * Mueve el nodo que ya existe en vez de recrearlo, así conserva el listener
+ * registrado una sola vez al cargar el módulo.
+ */
+function placeAddClassButton() {
+    const container = document.getElementById('trainingClassesList');
+    if (!container || !addClassBtn) return;
+    container.appendChild(addClassBtn);
+}
+
+/**
+ * Lleva el cursor al nombre de una clase.
+ *
+ * Tiene que correr de forma sincrónica dentro del handler del click: los
+ * navegadores móviles (iOS en particular) solo abren el teclado para un focus()
+ * hecho durante el gesto del usuario.
+ */
+function focusClassNameInput(classIndex) {
+    // El guard de tipo vive en getClassCard(), que es quien arma el selector.
+    // Si esta función alguna vez arma uno propio, tiene que repetirlo.
+    const card = getClassCard(classIndex);
+    if (!card) return;
+    const input = card.querySelector('.class-name-input:not([disabled])');
+    if (!input) {
+        // La primera clase de audio tiene el nombre fijo y el input deshabilitado.
+        // Si un registro rehidratado trajera '' ahí, el motivo se mostraría sin
+        // forma de resolverlo: al menos se dice qué pasa en vez de no hacer nada.
+        card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        showToast('Esa clase tiene el nombre fijo y no se puede editar.', 'error');
+        return;
+    }
+    input.focus({ preventScroll: true });
+    input.select();
+    card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+// ============================================
+// PANEL "TODAVÍA NO SE PUEDE ENTRENAR"
+// ============================================
+
+function paintTrainBlockers(blockers) {
+    // formatBlocker() puede traer un nombre escrito por el usuario: entra al
+    // DOM por textContent, nunca por innerHTML. Devuelve '' para un tipo de
+    // motivo sin texto; ese caso se descarta en vez de dejar un <li> vacío.
+    const items = blockers
+        .map(blocker => formatBlocker(blocker))
+        .filter(text => text !== '')
+        .map(text => {
+            const li = document.createElement('li');
+            li.textContent = text;
+            return li;
+        });
+    trainBlockersList.replaceChildren(...items);
+    const blocked = getBlockedClassIndices(blockers);
+    getClassCards().forEach(card => {
+        card.classList.toggle('class-card--blocked', blocked.has(+card.dataset.index));
+    });
+}
+
+function hideTrainBlockers() {
+    trainBlockersVisible = false;
+    trainBlockersPanel.classList.add('hidden');
+    trainBlockersList.replaceChildren();
+    getClassCards().forEach(card => card.classList.remove('class-card--blocked'));
+}
+
+/**
+ * Se llama al hacer click en Entrenar. Devuelve true si se puede entrenar.
+ * Si no, abre el panel con los motivos, resalta las tarjetas involucradas y
+ * lleva a la persona al primer problema.
+ */
+function checkTrainingReadiness() {
+    const blockers = getTrainingBlockers(getTrainer().getClasses());
+    if (blockers.length === 0) {
+        hideTrainBlockers();
+        return true;
+    }
+    trainBlockersVisible = true;
+    trainBlockersPanel.classList.remove('hidden');
+    paintTrainBlockers(blockers);
+
+    const first = blockers.find(b => Number.isInteger(b.classIndex));
+    if (first && first.type === BLOCKER_MISSING_NAME) {
+        focusClassNameInput(first.classIndex);
+    } else if (first) {
+        const card = getClassCard(first.classIndex);
+        if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } else {
+        trainBlockersPanel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+    return false;
+}
+
+/**
+ * Actualización en vivo mientras el panel está abierto: se reevalúa después de
+ * cada cambio y se cierra solo cuando ya no queda nada pendiente.
+ */
+function refreshTrainBlockers() {
+    if (!trainBlockersVisible) return;
+    const blockers = getTrainingBlockers(getTrainer().getClasses());
+    if (blockers.length === 0) {
+        hideTrainBlockers();
+    } else {
+        paintTrainBlockers(blockers);
+    }
+}
+
 function renderTrainingClasses() {
     const projectType = currentModel?.projectType || 'image';
     const config = getConfig(projectType);
@@ -986,11 +1205,11 @@ function renderTrainingClasses() {
         const color = getClassColor(i);
         const samples = t.getSamples(i);
         const isFixed = config.fixedFirstClass && i === 0;
-        const pct = Math.min(100, (c.count / 8) * 100);
+        const pct = Math.min(100, (c.count / MIN_SAMPLES_PER_CLASS) * 100);
 
         const progressBarHTML = config.showProgressBar ? `
                 <div class="sample-progress-wrap">
-                    <div class="sample-progress-fill${c.count >= 8 ? ' ready' : ''}" style="width:${pct}%"></div>
+                    <div class="sample-progress-fill${c.count >= MIN_SAMPLES_PER_CLASS ? ' ready' : ''}" style="width:${pct}%"></div>
                 </div>` : '';
 
         const menuHTML = isFixed ? '' : `
@@ -1022,6 +1241,7 @@ function renderTrainingClasses() {
                 <div class="class-card-header-left">
                     <div class="class-dot" style="background:${color.dot};"></div>
                     <input class="class-name-input" value="${escapeHtml(c.name)}" data-index="${i}"
+                        placeholder="${escapeHtml(UNNAMED_CLASS_LABEL)}" aria-label="Nombre de la clase"
                         maxlength="${MAX_CLASS_NAME_BYTES}"
                         style="color:${color.headerText};" ${isFixed ? 'disabled' : ''}>
                     ${isFixed ? '' : '<span class="class-name-counter" hidden></span>'}
@@ -1075,7 +1295,11 @@ function renderTrainingClasses() {
     const firstCard = container.querySelector('.training-class-card');
     if (firstCard) setActiveCard(firstCard);
 
+    placeAddClassButton();
     updateTrainButton();
+    // Después de placeAddClassButton(): el resaltado se pinta sobre tarjetas
+    // recién creadas, así que tiene que sobrevivir a cada render.
+    refreshTrainBlockers();
 }
 
 function wireTrainingClassEvents(container, config, t) {
@@ -1141,6 +1365,8 @@ function wireTrainingClassEvents(container, config, t) {
             }
             persistClassNames();
             setValue(newName);
+            // Ponerle nombre a una clase puede ser justo lo que faltaba.
+            refreshTrainBlockers();
         });
 
         updateNameCounter(input);
@@ -1178,12 +1404,12 @@ function wireTrainingClassEvents(container, config, t) {
     // Delete class
     container.querySelectorAll('.btn-delete-class-unified').forEach(btn => {
         btn.addEventListener('click', () => {
-            if (t.getTotalClasses() <= 2) {
-                showToast('Mínimo 2 clases', 'error');
+            if (t.getTotalClasses() <= MIN_CLASSES) {
+                showToast(`Mínimo ${MIN_CLASSES} clases`, 'error');
                 return;
             }
             if (config.captureMode === 'audio') {
-                batchRecordingActive = false;
+                // Solo se pide la cancelación; el cierre lo hace el loop.
                 batchRecordingCancelled = true;
             }
             t.removeClass(+btn.dataset.index);
@@ -1219,9 +1445,20 @@ function wireTrainingClassEvents(container, config, t) {
     if (config.captureMode === 'audio') {
         container.querySelectorAll('.btn-capture-one-unified').forEach(btn => {
             btn.addEventListener('click', async () => {
-                if (audioTrainer.getIsRecording()) return;
-                await recordWithCountdown(+btn.dataset.index);
-                scheduleSampleSave();
+                if (audioTrainer.getIsRecording() || batchRecordingActive) return;
+                const ci = +btn.dataset.index;
+                // El botón queda siempre activo, igual que Entrenar: el click
+                // explica qué falta en vez de no hacer nada.
+                if (!requireAudioClassName(ci)) return;
+
+                const gen = openRecordModal(ci);
+                try {
+                    await recordWithCountdown(ci, gen);
+                } finally {
+                    // En el finally: una excepción del productor no puede dejar
+                    // el modal abierto tapando la pantalla entera.
+                    finishRecordingBatch();
+                }
             });
         });
     } else {
@@ -1248,52 +1485,33 @@ function wireTrainingClassEvents(container, config, t) {
         container.querySelectorAll('.btn-capture-hold-unified').forEach(btn => {
             const ci = +btn.dataset.index;
             btn.addEventListener('click', async () => {
-                if (batchRecordingActive) {
-                    if (!batchRecordingCancelled) {
-                        batchRecordingCancelled = true;
-                        btn.innerHTML = '<span class="hold-dot"></span> Cancelando...';
-                    }
-                    return;
-                }
+                if (batchRecordingActive || audioTrainer.getIsRecording()) return;
+                // El botón queda siempre activo, igual que Entrenar: el click
+                // explica qué falta en vez de no hacer nada.
+                if (!requireAudioClassName(ci)) return;
 
-                batchRecordingActive = true;
-                batchRecordingCancelled = false;
                 btn.classList.add('capturing');
-
-                const cancelBtn = document.getElementById('audioRecordCancelBtn');
-                cancelBtn.classList.add('visible');
-                cancelBtn.onclick = () => {
-                    if (!batchRecordingCancelled) {
-                        batchRecordingCancelled = true;
-                        btn.innerHTML = '<span class="hold-dot"></span> Cancelando...';
+                const gen = openRecordModal(ci);
+                try {
+                    // La primera clase de audio es siempre el ruido de fondo
+                    // (requisito de speech-commands). Es la única donde grabar
+                    // de corrido tiene sentido: en las demás la regresiva es lo
+                    // que le da tiempo a la docente a pronunciar la palabra.
+                    if (ci === 0) {
+                        await recordBatchContinuous(ci, gen, 10);
+                    } else {
+                        for (let n = 1; n <= 10; n++) {
+                            if (recordingAborted(gen)) break;
+                            await recordWithCountdown(ci, gen, n, 10);
+                        }
                     }
-                };
-
-                // La primera clase de audio es siempre el ruido de fondo
-                // (requisito de speech-commands). Es la única donde grabar de
-                // corrido tiene sentido: en las demás la regresiva es lo que le
-                // da tiempo a la docente a pronunciar la palabra.
-                if (ci === 0) {
-                    await recordBatchContinuous(ci, 10);
-                } else {
-                    for (let n = 1; n <= 10; n++) {
-                        if (batchRecordingCancelled) break;
-                        await recordWithCountdown(ci, n, 10);
-                        if (batchRecordingCancelled) break;
-                    }
+                } finally {
+                    // En el finally: una excepción del productor no puede dejar
+                    // el modal abierto tapando la pantalla entera.
+                    btn.classList.remove('capturing');
+                    btn.innerHTML = '<span class="hold-dot"></span> ' + config.captureHoldLabel;
+                    finishRecordingBatch();
                 }
-
-                cancelBtn.classList.remove('visible');
-                cancelBtn.onclick = null;
-
-                batchRecordingActive = false;
-                batchRecordingCancelled = false;
-                btn.classList.remove('capturing');
-                btn.innerHTML = '<span class="hold-dot"></span> ' + config.captureHoldLabel;
-
-                updateClassUI(ci);
-                updateTrainButton();
-                scheduleSampleSave();
             });
         });
     } else {
@@ -1328,6 +1546,114 @@ function wireTrainingClassEvents(container, config, t) {
     }
 }
 
+// ============================================
+// MODAL DE GRABACIÓN DE AUDIO
+// ============================================
+
+const audioRecordModal = document.getElementById('audioRecordModal');
+const audioRecordStopBtn = document.getElementById('audioRecordStopBtn');
+const RECORD_STOP_LABEL = 'Detener toma de muestras';
+
+// La clase y la generación de la tanda en curso. La generación existe porque
+// el cierre de emergencia (abajo) puede dejar un recordSample() colgado: si esa
+// promesa despierta después, su generación ya no es la vigente y el loop sale
+// sin grabar nada más, aunque para entonces ya haya empezado otra tanda.
+let recordingClassIndex = null;
+let recordingGeneration = 0;
+
+/** true si la tanda de esta generación ya no debe seguir grabando. */
+function recordingAborted(generation) {
+    return generation !== recordingGeneration || batchRecordingCancelled;
+}
+
+/**
+ * Pide detener la tanda. No interrumpe nada: solo levanta el flag que los
+ * loops de grabación miran antes de cada paso. Una grabación ya empezada
+ * termina y su muestra queda.
+ *
+ * Reutiliza batchRecordingCancelled, el flag que ya tenía el botón de cerrar
+ * del overlay viejo, en vez de agregar uno nuevo.
+ *
+ * La SEGUNDA pulsación —y el segundo Escape— es la salida de emergencia. El
+ * modal tapa el viewport entero, así que si el productor no vuelve (una
+ * promesa de collectExample() que nunca resuelve porque la pestaña perdió el
+ * micrófono) sin esto la única salida sería recargar la app, perdiendo lo que
+ * estuviera dentro de la ventana del debounce. Lo grabado hasta acá ya está en
+ * el trainer y se guarda igual.
+ */
+function requestRecordingStop() {
+    if (!batchRecordingActive) return;
+    if (batchRecordingCancelled) {
+        finishRecordingBatch();
+        return;
+    }
+    batchRecordingCancelled = true;
+    audioRecordStopBtn.disabled = true;
+    audioRecordStopBtn.textContent = 'Deteniendo…';
+}
+
+/** Abre el modal para una tanda nueva. Devuelve su generación. */
+function openRecordModal(classIndex) {
+    recordingClassIndex = classIndex;
+    recordingGeneration++;
+    batchRecordingActive = true;
+    batchRecordingCancelled = false;
+    audioRecordStopBtn.disabled = false;
+    audioRecordStopBtn.textContent = RECORD_STOP_LABEL;
+    audioRecordModal.classList.remove('hidden');
+    audioRecordStopBtn.focus();
+    return recordingGeneration;
+}
+
+audioRecordStopBtn.addEventListener('click', requestRecordingStop);
+
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !audioRecordModal.classList.contains('hidden')) {
+        requestRecordingStop();
+    }
+});
+
+/**
+ * Cierre de una tanda de grabación: por completarse, por detenerse o por la
+ * salida de emergencia. Es el MISMO camino en los tres casos, y el guardado lo
+ * dispara el productor —el loop—, no el botón de detener, que solo levanta el
+ * flag. Los handlers lo llaman desde un `finally`, así que una excepción del
+ * productor tampoco deja el modal abierto.
+ *
+ * Idempotente: batchRecordingActive es el testigo. Un loop que vuelve después
+ * de un cierre de emergencia lo encuentra apagado y no rehace nada.
+ *
+ * NO baja batchRecordingCancelled: si quedó una grabación colgada, el flag en
+ * true es lo que la hace salir cuando despierte. Lo reinicia openRecordModal()
+ * al empezar la tanda siguiente.
+ */
+function finishRecordingBatch() {
+    if (!batchRecordingActive) return;
+    batchRecordingActive = false;
+    audioRecordModal.classList.add('hidden');
+    audioRecordStopBtn.disabled = false;
+    audioRecordStopBtn.textContent = RECORD_STOP_LABEL;
+    const classIndex = recordingClassIndex;
+    recordingClassIndex = null;
+    updateClassUI(classIndex);
+    updateTrainButton();
+    scheduleSampleSave();
+}
+
+/**
+ * Una clase de audio sin nombre no se puede grabar: renameClass() del trainer
+ * de audio tira si la clase ya tiene muestras, así que grabar primero dejaría
+ * la clase trabada sin forma de nombrarla. Además el nombre ES la clave con la
+ * que speech-commands indexa las muestras.
+ */
+function requireAudioClassName(classIndex) {
+    const className = audioTrainer.getClassNames()[classIndex];
+    if (typeof className === 'string' && className.trim() !== '') return true;
+    showToast('La clase necesita un nombre antes de grabar.', 'info');
+    focusClassNameInput(classIndex);
+    return false;
+}
+
 /**
  * Graba varias muestras seguidas con UNA sola regresiva al principio.
  *
@@ -1337,15 +1663,12 @@ function wireTrainingClassEvents(container, config, t) {
  * graba unos segundos para dejar de hablar, así la primera muestra captura la
  * sala como suena y no el click del botón.
  */
-async function recordBatchContinuous(classIndex, total) {
-    const modal = document.getElementById('audioRecordModal');
+async function recordBatchContinuous(classIndex, generation, total) {
     const numberEl = document.getElementById('countdownNumber');
     const labelEl = document.getElementById('countdownLabel');
 
-    modal.classList.remove('hidden');
-
     for (let i = 3; i >= 1; i--) {
-        if (batchRecordingCancelled) break;
+        if (recordingAborted(generation)) return;
         numberEl.className = 'countdown-number';
         numberEl.textContent = i;
         labelEl.textContent = 'Silencio, por favor...';
@@ -1354,13 +1677,14 @@ async function recordBatchContinuous(classIndex, total) {
         await new Promise(r => setTimeout(r, 800));
     }
 
-    if (!batchRecordingCancelled) {
-        numberEl.className = 'countdown-number recording';
-        numberEl.textContent = '🔴';
-    }
+    if (recordingAborted(generation)) return;
+    numberEl.className = 'countdown-number recording';
+    numberEl.textContent = '🔴';
 
     for (let n = 1; n <= total; n++) {
-        if (batchRecordingCancelled) break;
+        // Antes de cada muestra, nunca en el medio: una grabación empezada
+        // termina y su muestra queda.
+        if (recordingAborted(generation)) return;
         labelEl.textContent = `Ruido de fondo ${n}/${total}`;
         try {
             await audioTrainer.recordSample(classIndex);
@@ -1374,21 +1698,14 @@ async function recordBatchContinuous(classIndex, total) {
     numberEl.textContent = '✓';
     labelEl.textContent = 'Listo';
     await new Promise(r => setTimeout(r, 400));
-
-    modal.classList.add('hidden');
-
-    updateClassUI(classIndex);
-    updateTrainButton();
 }
 
-async function recordWithCountdown(classIndex, current = null, total = null) {
-    const modal = document.getElementById('audioRecordModal');
+async function recordWithCountdown(classIndex, generation, current = null, total = null) {
     const numberEl = document.getElementById('countdownNumber');
     const labelEl = document.getElementById('countdownLabel');
 
-    modal.classList.remove('hidden');
-
     for (let i = 3; i >= 1; i--) {
+        if (recordingAborted(generation)) return;
         numberEl.className = 'countdown-number';
         numberEl.textContent = i;
         labelEl.textContent = (current !== null && total !== null)
@@ -1400,6 +1717,7 @@ async function recordWithCountdown(classIndex, current = null, total = null) {
         await new Promise(r => setTimeout(r, 800));
     }
 
+    if (recordingAborted(generation)) return;
     numberEl.className = 'countdown-number recording';
     numberEl.textContent = '🔴';
     labelEl.textContent = '¡GRABANDO!';
@@ -1415,11 +1733,6 @@ async function recordWithCountdown(classIndex, current = null, total = null) {
     labelEl.textContent = 'Listo';
 
     await new Promise(r => setTimeout(r, 400));
-
-    modal.classList.add('hidden');
-
-    updateClassUI(classIndex);
-    updateTrainButton();
 }
 
 /**
@@ -1444,6 +1757,29 @@ function persistClassNames() {
             'error'
         );
     }
+}
+
+/**
+ * Todo lo que hay que hacer al abandonar la pantalla de captura, sea para
+ * volver al home o para ir a programar la placa.
+ *
+ * Un hold de webcam/pose captura por su cuenta con un setInterval propio del
+ * trainer (~5 fps) que nunca pasa por scheduleSampleSave(): eso solo corre en
+ * la rama que responde al click de "Detener". Si se sale de la pantalla con un
+ * hold todavía activo, sampleSaveDirty sigue en false y flushSampleSave() no
+ * escribiría nada. Por eso el guardado se fuerza, y se apaga cualquier ticker
+ * de UI de un hold activo (btn._updateInterval) antes de tocar el DOM, para
+ * que no siga actualizando tarjetas ajenas si el próximo proyecto reutiliza
+ * los mismos data-index.
+ */
+async function leaveCaptureScreen() {
+    // Solo se pide la cancelación; el cierre lo hace el loop.
+    batchRecordingCancelled = true;
+    document.querySelectorAll('.btn-capture-hold-unified.capturing').forEach(btn => {
+        clearInterval(btn._updateInterval);
+    });
+    scheduleSampleSave();
+    await flushSampleSave();
 }
 
 function scheduleSampleSave() {
@@ -1488,37 +1824,29 @@ async function flushSampleSave() {
     return sampleSaveChain;
 }
 
+/**
+ * El botón Entrenar está SIEMPRE activo: faltar clases, nombres o muestras ya
+ * no lo deshabilita, porque un botón gris no dice qué falta. El click valida
+ * con getTrainingBlockers() y abre el panel de motivos (checkTrainingReadiness).
+ *
+ * Lo único que lo bloquea es no poder entrenar en ese instante: un
+ * entrenamiento ya en curso, o el loop de predicción de un modelo de cámara,
+ * que le tiene tomada la webcam.
+ */
 function updateTrainButton() {
-    const isAudio = currentModel?.projectType === 'audio';
-    const t = getTrainer();
-    const cls = t.getClasses();
-    const isCameraModel = !isAudio;
+    const isCameraModel = currentModel?.projectType !== 'audio';
 
     const trainBtn = document.getElementById('trainBtn');
     const label = trainBtn.querySelector('.train-label');
 
-    // Don't override during active training
-    if (trainBtn.classList.contains('training')) return;
+    trainBtn.disabled = trainingInProgress || (isCameraModel && predictionLoopRunning);
+    trainBtn.title = '';
+    // Con un modelo ya entrenado, entrenar es reentrenar — y al lado aparece la
+    // vía para ir a programar la placa SIN volver a entrenar.
+    label.textContent = modelReadyForProgramming ? 'Reentrenar' : 'Entrenar';
+    goProgramBtn.classList.toggle('hidden', !modelReadyForProgramming);
 
-    const ready = cls.length >= 2 && cls.every(c => c.count >= 8);
-    trainBtn.disabled = !ready || (isCameraModel && predictionLoopRunning);
-
-    label.textContent = 'Entrenar';
-
-    if (!ready) {
-        if (cls.length < 2) {
-            trainBtn.title = 'Se necesitan al menos 2 clases';
-        } else {
-            const needSamples = cls.filter(c => c.count < 8);
-            if (needSamples.length === 1) {
-                trainBtn.title = `Faltan muestras en "${needSamples[0].name}" (mínimo 8)`;
-            } else {
-                trainBtn.title = `Faltan muestras en ${needSamples.length} clases (mínimo 8 por clase)`;
-            }
-        }
-    } else {
-        trainBtn.title = '';
-    }
+    refreshTrainBlockers();
 }
 
 // ============================================
@@ -1542,7 +1870,7 @@ async function openPreviewModal() {
             <div class="preview-class-card" id="previewCard-${i}" data-color="${color}">
                 <div class="preview-class-card-header">
                     <div class="preview-class-dot" style="background: ${color};"></div>
-                    <span class="preview-class-name">${escapeHtml(name)}</span>
+                    <span class="preview-class-name">${escapeHtml(displayClassName(name))}</span>
                     <span class="preview-class-pct" id="previewPct-${i}" style="color: #888;">0%</span>
                 </div>
                 <div class="preview-conf-track">
@@ -1696,6 +2024,11 @@ function closePreviewModal() {
 
     wrapper.innerHTML = '';
     modal.classList.add('hidden');
+
+    // Volver del preview a entrenamiento es el primer momento en que se ve el
+    // botón de programar. En audio no se re-renderizan las clases al terminar
+    // de entrenar, así que este es el único punto que lo cubre en los tres.
+    updateTrainButton();
 }
 
 // ============================================
@@ -1880,22 +2213,8 @@ document.getElementById('trainProjectName').addEventListener('keypress', (e) => 
 
 // Training screen
 document.getElementById('trainingBackBtn').addEventListener('click', async () => {
-    batchRecordingActive = false;
-    batchRecordingCancelled = true;
-    // Un hold de webcam/pose captura por su cuenta con un setInterval propio
-    // del trainer (~5 fps) que nunca pasa por scheduleSampleSave(): eso solo
-    // corre en la rama que responde al click de "Detener". Si se sale de la
-    // pantalla con un hold todavía activo, sampleSaveDirty sigue en false y
-    // flushSampleSave() no escribiría nada. Se fuerza el guardado acá, y se
-    // apaga cualquier ticker de UI de un hold activo (btn._updateInterval)
-    // antes de vaciar el DOM, para que no siga actualizando tarjetas ajenas
-    // si el próximo proyecto reutiliza los mismos data-index.
-    document.querySelectorAll('.btn-capture-hold-unified.capturing').forEach(btn => {
-        clearInterval(btn._updateInterval);
-    });
-    scheduleSampleSave();
     // Antes de dispose(): dispose() llama a stopCapture() y vacia classes.
-    await flushSampleSave();
+    await leaveCaptureScreen();
     closeCaptureWebcamSilent();
     audioTrainer.stopListening();
     audioTrainer.stopVisualizer();
@@ -1903,6 +2222,14 @@ document.getElementById('trainingBackBtn').addEventListener('click', async () =>
     trainer.dispose();
     audioTrainer.dispose();
     poseTrainer.dispose();
+    hideTrainBlockers();
+    // Los dispose() de arriba dejaron los trainers vacíos: el próximo proyecto
+    // decide de nuevo si tiene modelo.
+    modelReadyForProgramming = false;
+    trainedClassesSignature = null;
+    trainedClassNames = null;
+    // Vacía la lista con el botón "Nueva clase" adentro. El nodo sigue vivo en
+    // addClassBtn y el próximo render lo vuelve a insertar.
     document.getElementById('trainingClassesList').innerHTML = '';
     trainingFacingMode = 'user';
     renderModels();
@@ -1951,28 +2278,74 @@ document.getElementById('predictionExpandBtn').addEventListener('click', toggleP
 document.getElementById('captureFlipBtn').addEventListener('click', () => { if (currentModel?.projectType !== 'audio') flipCaptureCamera(); });
 document.getElementById('previewFlipBtn').addEventListener('click', () => { if (currentModel?.projectType !== 'audio') flipPreviewCamera(); });
 
-document.getElementById('addClassBtn').addEventListener('click', () => {
+addClassBtn.addEventListener('click', () => {
     const t = getTrainer();
-    // The generated name can collide with a class the user renamed.
-    const existing = t.getClassNames();
-    let n = t.getTotalClasses() + 1;
-    let name = `Clase ${n}`;
-    while (isDuplicateClassName(name, existing)) {
-        n++;
-        name = `Clase ${n}`;
-    }
-    t.addClass(name);
+    // La clase nace SIN nombre. No se autogenera "Clase N" ni se guarda
+    // "Clase sin nombre": esa etiqueta es solo de presentación (el placeholder
+    // del input) y dos clases nuevas con el mismo nombre se rechazarían como
+    // duplicadas — en audio, además, el nombre es la clave con la que el
+    // recognizer indexa las muestras.
+    const index = t.addClass('');
     persistClassNames();
     renderTrainingClasses();
-    const container = document.getElementById('trainingClassesList');
-    const cards = container.querySelectorAll('.training-class-card');
-    if (cards.length) setActiveCard(cards[cards.length - 1]);
+    const card = getClassCard(index);
+    if (card) setActiveCard(card);
+    // Sincrónico dentro del click: iOS solo abre el teclado para un focus()
+    // hecho durante el gesto del usuario.
+    focusClassNameInput(index);
+});
+
+goProgramBtn.addEventListener('click', async () => {
+    if (!currentModel || !modelReadyForProgramming || goProgramBtn.disabled) return;
+
+    const classes = getTrainer().getClasses();
+
+    // Para programar, el modelo tiene que estar al día. CUALQUIER diferencia
+    // entre lo que se ve y lo que el modelo aprendió corta el paso, por dos
+    // motivos de peso distinto:
+    //
+    //   - Agregar, borrar o renombrar una clase CORRE el mapeo salida→nombre.
+    //     Los tres trainers etiquetan por índice contra su lista viva, así que
+    //     la placa recibiría el nombre de otra clase sin que nada lo delate.
+    //   - Muestras de más o de menos no corren nada, pero dejan la pantalla
+    //     mostrando un modelo que no es el que está en la placa. Programar
+    //     desde ahí es programar a ciegas.
+    //
+    // Reentrenar es lo que confirma los cambios. La regla es una sola y se
+    // explica en una línea, que es lo que la hace enseñable.
+    const namesChanged = classNamesDiverged(trainedClassNames, classes);
+    if (namesChanged || hasUntrainedChanges(trainedClassesSignature, classes)) {
+        showToast(
+            namesChanged
+                ? 'Cambiaste las clases: reentrená para poder programar la placa.'
+                : 'Cambiaste las muestras: reentrená para poder programar la placa.',
+            'error'
+        );
+        return;
+    }
+
+    // Sin guard, dos toques seguidos abren dos pantallas de predicción y la
+    // segunda webcam queda huérfana con la luz prendida.
+    goProgramBtn.disabled = true;
+    try {
+        await leaveCaptureScreen();
+        await openPredictionScreen(currentModel);
+    } finally {
+        goProgramBtn.disabled = false;
+    }
 });
 
 document.getElementById('trainBtn').addEventListener('click', async () => {
     const btn = document.getElementById('trainBtn');
     const isAudio = currentModel?.projectType === 'audio';
     const t = getTrainer();
+
+    if (trainingInProgress) return;
+    // El botón está siempre activo: acá es donde se explica qué falta, antes de
+    // tocar la webcam, el audio o el guardado de muestras.
+    if (!checkTrainingReadiness()) return;
+
+    trainingInProgress = true;
 
     if (isAudio) {
         audioTrainer.stopListening();
@@ -1995,6 +2368,11 @@ document.getElementById('trainBtn').addEventListener('click', async () => {
     // de escribirse, porque train() vacia las muestras en memoria del
     // trainer de imagen y un timer tardio escribiria un dataset vacio.
     cancelPendingSampleSave();
+    // La huella se toma ANTES de train(): el de imagen vacía las muestras en
+    // memoria, así que después el conteo sería cero hasta el loadSamples() de
+    // más abajo. Este es el estado que el modelo va a haber visto.
+    const signatureBeingTrained = classesSignature(t.getClasses());
+    const namesBeingTrained = t.getClassNames();
     try {
         await t.saveSamples(currentModel.id);
     } catch (e) {
@@ -2002,6 +2380,7 @@ document.getElementById('trainBtn').addEventListener('click', async () => {
         overlay.classList.add('hidden');
         overlayLabel.textContent = 'Entrenando modelo...';
         showToast('No se pudieron guardar las muestras. Puede que no quede espacio en el navegador.', 'error');
+        trainingInProgress = false;
         btn.disabled = false;
         return;
     }
@@ -2019,8 +2398,20 @@ document.getElementById('trainBtn').addEventListener('click', async () => {
         await new Promise(r => setTimeout(r, 600));
 
         const localModelInfo = await t.saveModel(currentModel.id);
-        const updated = updateProjectModel(currentModel.id, localModelInfo);
+        // `trainedSignature` es aditivo sobre localModel: la frontera de
+        // rehidratación preserva los campos que no conoce, así que no cambia
+        // PROJECT_SCHEMA_VERSION y un build viejo lo ignora sin romperse.
+        const updated = updateProjectModel(currentModel.id, {
+            ...localModelInfo,
+            trainedSignature: signatureBeingTrained,
+            trainedClassNames: namesBeingTrained
+        });
         if (updated) currentModel = updated;
+        // A partir de acá el proyecto tiene modelo: "Entrenar" pasa a
+        // "Reentrenar" y aparece "Programar micro:bit" al volver del preview.
+        modelReadyForProgramming = true;
+        trainedClassesSignature = signatureBeingTrained;
+        trainedClassNames = namesBeingTrained;
         renderModels();
 
         overlay.classList.add('hidden');
@@ -2045,6 +2436,7 @@ document.getElementById('trainBtn').addEventListener('click', async () => {
         }
     }
 
+    trainingInProgress = false;
     btn.disabled = false;
 });
 

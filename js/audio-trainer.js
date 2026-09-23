@@ -115,7 +115,18 @@ function generateSpectrogramThumb(spectrogramData, frameSize) {
 function rebuildThumbs() {
     classThumbs = {};
     for (const name of classNames) {
-        const examples = transfer.getExamples(name);
+        // getExamples() tira cuando la palabra no tiene ejemplos, que es un
+        // estado legítimo: una clase todavía sin grabar, o —desde que una clase
+        // nace sin nombre— la clase vacía que la docente acaba de crear. Sin
+        // este try/catch, una sola clase vacía abortaba el rebuild entero y el
+        // proyecto se abría sin ninguna miniatura. Mismo motivo que el
+        // try/catch de clearSamples().
+        let examples;
+        try {
+            examples = transfer.getExamples(name);
+        } catch (e) {
+            continue;
+        }
         if (!examples || examples.length === 0) continue;
         classThumbs[name] = examples
             .filter(ex => ex && ex.example && isValidSpectrogram(ex.example.spectrogram))
@@ -641,6 +652,13 @@ async function loadSavedModel(localModelInfo) {
     // Try transfer.load() directly
     if (typeof transfer.load === 'function') {
         await transfer.load('indexeddb://' + localModelInfo.storageKey);
+        // load() restaura las etiquetas SOLO cuando se lo llama sin URL: con una
+        // URL explícita se salta el bloque que lee los metadatos y deja
+        // `words` como esté. Sin esto, listen() etiqueta los scores con el
+        // vocabulario VIVO del dataset, que ya no tiene por qué coincidir con
+        // el orden de salidas del modelo — y la placa recibe el nombre de otra
+        // clase. Mismo restore que hace la rama de fallback de abajo.
+        restoreWordLabels();
         return;
     }
 
@@ -656,16 +674,26 @@ async function loadSavedModel(localModelInfo) {
         }
     }
 
-    // Restore word labels so listen() maps scores correctly
-    for (const prop of ['words', 'words_', 'wordList_']) {
-        if (prop in transfer) {
-            transfer[prop] = [...classNames].sort();
-            break;
-        }
-    }
+    restoreWordLabels();
 
     if (!injected) {
         throw new Error('No se pudo restaurar el modelo de audio');
+    }
+}
+
+/**
+ * Restaura las etiquetas con las que listen() mapea los scores del modelo.
+ *
+ * Ordenadas: speech-commands indexa las salidas por el vocabulario ordenado
+ * (`getVocabulary()` hace `sort()`), así que este es el orden con el que se
+ * entrenó, no el de inserción de `classNames`.
+ */
+function restoreWordLabels() {
+    for (const prop of ['words', 'words_', 'wordList_']) {
+        if (prop in transfer) {
+            transfer[prop] = [...classNames].sort();
+            return;
+        }
     }
 }
 

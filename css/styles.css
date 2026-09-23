@@ -917,6 +917,20 @@ button, a, input {
     border-bottom-color: currentColor;
 }
 
+/* Texto guía "Clase sin nombre" de una clase todavía sin nombre */
+.class-card-header .class-name-input::placeholder {
+    color: #6b6b6b;
+    font-style: italic;
+    font-weight: 600;
+    opacity: 1;
+}
+
+/* Tarjeta señalada por el panel de "todavía no se puede entrenar" */
+.training-class-card.class-card--blocked {
+    outline: 3px solid #f0b35b;
+    outline-offset: 2px;
+}
+
 .class-name-counter {
     font-size: 0.7rem;
     color: var(--text-light);
@@ -1435,11 +1449,28 @@ button, a, input {
     flex-shrink: 0;
 }
 
-.classes-card-footer .btn-primary {
+/* Entrenar y Programar, lado a lado. Con `flex-wrap` se apilan solos cuando la
+   columna de clases es angosta, en vez de comprimir las etiquetas. */
+.classes-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.classes-card-actions > button {
+    flex: 1 1 150px;
+}
+
+#goProgramBtn.hidden {
+    display: none;
+}
+
+.classes-card-footer .btn-primary,
+.classes-card-footer .btn-secondary {
     width: 100%;
-    padding: 0.625rem 1.5rem;
+    padding: 0.625rem 1rem;
     font-size: 1rem;
-    min-height: 40px;
+    min-height: 44px;
     border-radius: 8px;
     box-shadow: none;
 }
@@ -1452,6 +1483,35 @@ button, a, input {
     background: #b0b0b0;
     box-shadow: none;
     cursor: not-allowed;
+}
+
+/* Panel de motivos por los que todavía no se puede entrenar */
+.train-blockers {
+    margin-top: 10px;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: #fff4e5;
+    border: 1px solid #f0b35b;
+    color: #6b4200;
+    font-size: 0.85rem;
+}
+
+.train-blockers.hidden {
+    display: none;
+}
+
+.train-blockers__title {
+    margin: 0 0 6px;
+    font-weight: 700;
+}
+
+.train-blockers__list {
+    margin: 0;
+    padding-left: 20px;
+}
+
+.train-blockers__list li + li {
+    margin-top: 4px;
 }
 
 .train-btn-pct {
@@ -1728,60 +1788,65 @@ button, a, input {
 }
 
 /* ── Audio Record Countdown Modal ── */
-.audio-record-cancel-btn {
-    position: absolute;
-    top: 1rem;
-    right: 1rem;
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.18);
-    border: 2px solid rgba(255, 255, 255, 0.35);
-    color: white;
-    font-size: 1.5rem;
-    line-height: 1;
-    cursor: pointer;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    font-family: inherit;
-    transition: background 0.15s;
-    touch-action: manipulation;
-}
-
-.audio-record-cancel-btn.visible {
-    display: flex;
-}
-
-.audio-record-cancel-btn:active {
-    background: rgba(255, 255, 255, 0.35);
-}
-
 .audio-record-modal {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.7);
+    background: rgba(0, 0, 0, 0.45);
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 16px;
     z-index: 3000;
 }
 
+/* El display:flex de arriba le gana a la regla genérica .hidden */
 .audio-record-modal.hidden {
     display: none;
 }
 
+/* Tarjeta centrada sobre el fondo oscurecido, no un overlay a pantalla completa */
 .audio-record-modal-content {
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px;
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
     text-align: center;
-    color: white;
+    color: var(--text);
+}
+
+.audio-record-stop-btn {
+    width: 100%;
+    min-height: 44px;
+    padding: 0.625rem 1rem;
+    border: none;
+    border-radius: 12px;
+    background: #009f95;
+    color: #fff;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.audio-record-stop-btn:hover:not(:disabled) {
+    filter: brightness(0.9);
+}
+
+.audio-record-stop-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
 }
 
 .countdown-number {
-    font-size: 120px;
+    font-size: 96px;
     font-weight: 800;
     font-family: 'Nunito', sans-serif;
     line-height: 1;
-    margin-bottom: 16px;
 }
 
 .countdown-number.pulse {
@@ -2073,26 +2138,30 @@ button, a, input {
     margin: 0;
 }
 
+/* Último elemento de la lista de clases: baja a medida que se agregan clases */
 .add-class-header-btn {
-    background: none;
-    border: 1px solid rgba(255, 255, 255, 0.5);
-    color: #fff;
-    padding: 6px 14px;
-    min-height: 40px;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 600;
+    width: 100%;
+    background: #fff;
+    border: 1.5px dashed var(--primary);
+    color: var(--primary);
+    padding: 10px 14px;
+    min-height: 44px;
+    border-radius: 12px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 700;
     cursor: pointer;
+    flex-shrink: 0;
     transition: background 0.15s;
     touch-action: manipulation;
 }
 
 .add-class-header-btn:hover {
-    background: rgba(255, 255, 255, 0.2);
+    background: #e1f5ee;
 }
 
 .add-class-header-btn:active {
-    background: rgba(255, 255, 255, 0.3);
+    background: #cbeade;
 }
 
 /* ===== Modal: Probar modelo ===== */

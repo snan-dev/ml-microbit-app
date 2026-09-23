@@ -7,6 +7,8 @@ import {
     truncateToBytes,
     normalizeClassName,
     isDuplicateClassName,
+    UNNAMED_CLASS_LABEL,
+    displayClassName,
     toEnumIdentifier,
     deriveEnumIdentifiers
 } from '../js/class-name.js';
@@ -168,5 +170,24 @@ describe('deriveEnumIdentifiers', () => {
     it('produces no duplicates for pathological input', () => {
         const ids = deriveEnumIdentifiers(['!', '?', '@', '1', '2']);
         assert.equal(new Set(ids).size, 5);
+    });
+});
+
+describe('displayClassName', () => {
+
+    it('falls back to the unnamed label', () => {
+        for (const name of ['', '   ', undefined, null, 5]) {
+            assert.equal(displayClassName(name), UNNAMED_CLASS_LABEL, String(name));
+        }
+    });
+
+    it('returns a real name untouched', () => {
+        assert.equal(displayClassName('Gato'), 'Gato');
+    });
+
+    it('UNNAMED_CLASS_LABEL is display-only: it does not fit the stored-name budget', () => {
+        // If this ever fits, still never store it: two new classes would collide.
+        assert.ok(byteLength(UNNAMED_CLASS_LABEL) > MAX_CLASS_NAME_BYTES);
+        assert.notEqual(normalizeClassName(UNNAMED_CLASS_LABEL), UNNAMED_CLASS_LABEL);
     });
 });
