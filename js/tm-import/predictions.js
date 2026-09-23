@@ -343,14 +343,30 @@ function visualizeAudio() {
     window.requestAnimationFrame(visualizeAudio);
 }
 
+// Brand colors live in :root (css/styles.css). Never duplicate them as literals.
+// The strong tone, not --color-primary: the canvas is painted white and the light
+// celeste is 1.96:1 against it. (#4169B8, the cold end of the gradient below, is a
+// visualizer color and not part of the brand palette.)
+// Cached: drawRoundedBar runs once per bar, on every animation frame.
+let cachedBarColor = null;
+
+function brandBarColor() {
+    if (!cachedBarColor) {
+        cachedBarColor = getComputedStyle(document.documentElement).getPropertyValue('--color-primary-strong').trim();
+    }
+    return cachedBarColor;
+}
 /**
  * Draw a rounded bar with gradient
  */
 function drawRoundedBar(ctx, x, y, width, height, radius, isUp) {
     if (height < 2) return;
+    // An empty token would make addColorStop throw and kill the rAF loop.
+    const barColor = brandBarColor();
+    if (!barColor) return;
     
     const gradient = ctx.createLinearGradient(0, isUp ? y : y, 0, isUp ? y + height : y + height);
-    gradient.addColorStop(0, '#009f95');
+    gradient.addColorStop(0, barColor);
     gradient.addColorStop(1, '#4169B8');
     
     ctx.fillStyle = gradient;

@@ -40,17 +40,29 @@
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+/* Brand palette — Talleres micro:bit (Ceibal).
+   Fill vs. foreground: text on a celeste fill uses --color-on-primary;
+   celeste used AS text/border/icon on white uses --color-primary-strong.
+   --color-primary alone fails contrast against white (1.96:1). */
+:root {
+    --color-primary: #5BC5F2;
+    --color-primary-hover: #2FB5EF;
+    --color-primary-active: #1CAFED;
+    --color-on-primary: #1D1D1B;
+    --color-primary-strong: #0D7BAA;
+    --color-primary-strong-hover: #0B678E;
+    --color-primary-soft: #E3F5FD;
+}
+
 /* ============================================
    TM + micro:bit - Responsive Mobile-First
    Tema Ceibal
    ============================================ */
 
 :root {
-    --primary: #009f95;
-    --primary-hover: #008680;
     --secondary: #0091DA;
     --accent: #FF6B35;
-    --success: #009f95;
+    --success: #0F6E56;
     --error: #E63946;
     --bg: #F5F5F5;
     --surface: #ffffff;
@@ -109,7 +121,7 @@ body {
 .header h1 {
     font-size: clamp(1.75rem, 5vw, 2.5rem);
     font-weight: 800;
-    color: var(--primary);
+    color: var(--color-primary-strong);
     margin-bottom: 0.5rem;
 }
 
@@ -134,13 +146,13 @@ body {
 }
 
 .btn-primary {
-    background: var(--primary);
-    color: white;
+    background: var(--color-primary);
+    color: var(--color-on-primary);
     box-shadow: var(--shadow);
 }
 
 .btn-primary:active {
-    background: var(--primary-hover);
+    background: var(--color-primary-active);
     transform: scale(0.98);
 }
 
@@ -159,8 +171,8 @@ body {
 }
 
 .btn-secondary:active {
-    border-color: var(--primary);
-    color: var(--primary);
+    border-color: var(--color-primary-strong);
+    color: var(--color-primary-strong);
 }
 
 /* Models */
@@ -199,7 +211,7 @@ body {
     flex: 0 0 auto;
     width: 200px;
     scroll-snap-align: start;
-    background: var(--primary);
+    background: var(--color-primary);
     border: none;
     border-radius: 12px;
     padding: 1.25rem;
@@ -208,7 +220,7 @@ body {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    color: white;
+    color: var(--color-on-primary);
     font-family: inherit;
     gap: 0.5rem;
     min-height: 148px;
@@ -224,7 +236,7 @@ body {
 }
 
 .model-card-new:active {
-    background: var(--primary-hover);
+    background: var(--color-primary-active);
     transform: scale(0.97);
 }
 
@@ -300,8 +312,8 @@ body {
 }
 
 .btn-use {
-    background: var(--primary);
-    color: white;
+    background: var(--color-primary);
+    color: var(--color-on-primary);
 }
 
 .btn-use:hover {
@@ -309,7 +321,7 @@ body {
 }
 
 .btn-use:active {
-    background: var(--primary-hover);
+    background: var(--color-primary-active);
 }
 
 .btn-delete {
@@ -357,7 +369,7 @@ body {
     background: none;
     border: none;
     font-size: 1.5rem;
-    color: var(--primary);
+    color: var(--color-primary-strong);
     font-weight: 400;
     padding: 0.5rem;
     min-width: 44px;
@@ -376,7 +388,7 @@ body {
 .btn-back svg {
     width: 24px;
     height: 24px;
-    stroke: var(--primary);
+    stroke: currentColor;
 }
 
 .badge {
@@ -543,12 +555,12 @@ body.prediction-expanded #prediction-predictions {
     padding: 10px 12px;
     background: #fff;
     border-radius: 8px;
-    border: 1px solid #d4ede9;
+    border: 1px solid var(--border);
     border-left: 3px solid transparent;
 }
 
 .prediction-item.top {
-    border-left-color: var(--primary);
+    border-left-color: var(--color-primary-strong);
     background: #fff;
 }
 
@@ -578,13 +590,13 @@ body.prediction-expanded #prediction-predictions {
 
 .confidence-fill {
     height: 100%;
-    background: var(--primary);
+    background: var(--color-primary-strong);
     transition: width 0.3s;
 }
 
 .model-card-classes {
     font-size: 0.8rem;
-    color: var(--primary);
+    color: var(--color-primary-strong);
     font-weight: 600;
     margin-bottom: 0.5rem;
     overflow: hidden;
@@ -684,8 +696,8 @@ body.prediction-expanded #prediction-predictions {
 
 .input-text:focus {
     outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(0, 168, 89, 0.1);
+    border-color: var(--color-primary-strong);
+    box-shadow: 0 0 0 3px var(--color-primary-soft);
 }
 
 .input-hint {
@@ -713,7 +725,7 @@ body.prediction-expanded #prediction-predictions {
 
 .modal-footer .btn-secondary:hover {
     filter: brightness(0.95);
-    border-color: var(--primary);
+    border-color: var(--color-primary-strong);
 }
 
 /* ============================================
@@ -734,7 +746,7 @@ body.prediction-expanded #prediction-predictions {
     padding: 1rem;
     border-radius: 12px;
     box-shadow: var(--shadow-lg);
-    border-left: 4px solid var(--primary);
+    border-left: 4px solid var(--color-primary-strong);
     
     /* Estado inicial: fuera de la pantalla a la derecha */
     transform: translateX(120%); 
@@ -810,7 +822,7 @@ button, a, input {
     align-items: center;
     gap: 0.5rem;
     border-bottom: none;
-    background: #009f95;
+    background: var(--color-primary);
     flex-shrink: 0;
 }
 
@@ -818,17 +830,17 @@ button, a, input {
     padding: 2px;
     min-width: 40px;
     min-height: 40px;
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(0, 0, 0, 0.12);
     border: none;
     border-radius: 6px;
     flex-shrink: 0;
-    color: #fff;
+    color: var(--color-on-primary);
 }
 
 .training-header h2 {
     font-size: 1.05rem;
     font-weight: 700;
-    color: #fff;
+    color: var(--color-on-primary);
     margin: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -840,8 +852,8 @@ button, a, input {
 .project-type-badge {
     font-size: 0.7rem;
     font-weight: 600;
-    background: rgba(255, 255, 255, 0.2);
-    color: #fff;
+    background: rgba(0, 0, 0, 0.12);
+    color: var(--color-on-primary);
     padding: 2px 10px;
     border-radius: 10px;
     flex-shrink: 0;
@@ -864,14 +876,14 @@ button, a, input {
 
 .training-class-card {
     background: var(--surface);
-    border: 1px solid #d4ede9;
+    border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
     flex-shrink: 0;
 }
 
 .training-class-card.class-card-active {
-    border-color: var(--primary);
+    border-color: var(--color-primary-strong);
     border-width: 2px;
 }
 
@@ -880,7 +892,7 @@ button, a, input {
     align-items: center;
     justify-content: space-between;
     padding: 10px 14px;
-    border-bottom: 1px solid #d4ede9;
+    border-bottom: 1px solid var(--border);
     gap: 8px;
 }
 
@@ -1139,7 +1151,7 @@ button, a, input {
 
 .progress-fill {
     height: 100%;
-    background: var(--primary);
+    background: var(--color-primary-strong);
     transition: width 0.3s;
     width: 0%;
 }
@@ -1171,12 +1183,12 @@ button, a, input {
 
 .btn-project-type:hover {
     filter: brightness(0.93);
-    border-color: var(--primary);
+    border-color: var(--color-primary-strong);
 }
 
 .btn-project-type:active {
-    border-color: var(--primary);
-    background: #e8f5f4;
+    border-color: var(--color-primary-strong);
+    background: var(--color-primary-soft);
 }
 
 .type-icon {
@@ -1282,7 +1294,7 @@ button, a, input {
     align-items: center;
     gap: 0.5rem;
     border-bottom: none;
-    background: #009f95;
+    background: var(--color-primary);
     flex-shrink: 0;
 }
 
@@ -1290,17 +1302,17 @@ button, a, input {
     padding: 2px;
     min-width: 40px;
     min-height: 40px;
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(0, 0, 0, 0.12);
     border: none;
     border-radius: 6px;
     flex-shrink: 0;
-    color: #fff;
+    color: var(--color-on-primary);
 }
 
 .prediction-header h2 {
     font-size: 1.05rem;
     font-weight: 700;
-    color: #fff;
+    color: var(--color-on-primary);
     margin: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1425,7 +1437,7 @@ button, a, input {
     flex-direction: column;
     background: #fff;
     border-radius: 14px;
-    border: 1px solid #d4ede9;
+    border: 1px solid var(--border);
     overflow: hidden;
     min-height: 0;
 }
@@ -1438,14 +1450,14 @@ button, a, input {
     flex-direction: column;
     gap: 0.75rem;
     padding: 10px;
-    background: #f0faf9;
+    background: var(--color-primary-soft);
     scrollbar-width: thin;
 }
 
 .classes-card-footer {
     padding: 10px;
-    background: #f0faf9;
-    border-top: 1px solid #d4ede9;
+    background: var(--color-primary-soft);
+    border-top: 1px solid var(--border);
     flex-shrink: 0;
 }
 
@@ -1463,6 +1475,12 @@ button, a, input {
 
 #goProgramBtn.hidden {
     display: none;
+}
+
+/* These sit on a --color-primary-soft footer, where a celeste fill alone is
+   only 1.75:1 against the panel. The edge is what makes them read as buttons. */
+.classes-card-footer .btn-primary {
+    border: 2px solid var(--color-primary-strong);
 }
 
 .classes-card-footer .btn-primary,
@@ -1613,16 +1631,16 @@ button, a, input {
     flex-direction: column;
     background: #fff;
     border-radius: 14px;
-    border: 1px solid #d4ede9;
+    border: 1px solid var(--border);
     overflow: hidden;
 }
 
 .predictions-card-header {
     padding: 10px 14px;
-    background: #009f95;
+    background: var(--color-primary);
     font-size: 13px;
     font-weight: 700;
-    color: #fff;
+    color: var(--color-on-primary);
     flex-shrink: 0;
 }
 
@@ -1631,15 +1649,15 @@ button, a, input {
     flex-direction: column;
     gap: 6px;
     padding: 8px;
-    background: #f0faf9;
+    background: var(--color-primary-soft);
 }
 
 .predictions-card-footer {
     display: flex;
     gap: 6px;
     padding: 8px;
-    background: #f0faf9;
-    border-top: 1px solid #d4ede9;
+    background: var(--color-primary-soft);
+    border-top: 1px solid var(--border);
 }
 
 /* ===== Flip buttons en training y preview ===== */
@@ -1654,25 +1672,28 @@ button, a, input {
     right: 1.75rem;
 }
 
+/* Sits on a --color-primary-soft footer, where a celeste fill alone is only
+   1.75:1 against the panel. The edge is what makes it read as a button. */
 .btn-pred-connect {
     flex: 1;
     padding: 0.5rem 1rem;
     border-radius: 8px;
     font-size: 0.875rem;
     font-weight: 600;
-    border: none;
+    border: 1.5px solid var(--color-primary-strong);
     cursor: pointer;
-    background: var(--primary);
-    color: #fff;
+    background: var(--color-primary);
+    color: var(--color-on-primary);
     transition: background 0.15s;
 }
 
 .btn-pred-connect:hover {
-    background: var(--primary-hover);
+    background: var(--color-primary-hover);
 }
 
 .btn-pred-connect.connected {
     background: var(--error);
+    color: #fff;
 }
 
 .btn-pred-connect.connected:hover {
@@ -1686,14 +1707,15 @@ button, a, input {
     font-size: 0.875rem;
     font-weight: 600;
     cursor: pointer;
-    background: transparent;
-    color: var(--primary);
-    border: 1.5px solid var(--primary);
+    background: var(--surface);
+    color: var(--color-primary-strong);
+    border: 1.5px solid var(--color-primary-strong);
     transition: background 0.15s;
 }
 
 .btn-pred-retrain:hover {
-    background: rgba(0, 159, 149, 0.08);
+    background: var(--color-primary-soft);
+    color: var(--color-primary-strong-hover);
 }
 
 
@@ -1754,24 +1776,26 @@ button, a, input {
 }
 
 .btn-audio-record {
-    background: var(--primary);
-    color: white;
+    background: var(--color-primary);
+    color: var(--color-on-primary);
     border: none;
 }
 
 .btn-audio-record:active {
-    background: var(--primary-hover);
+    background: var(--color-primary-active);
     transform: scale(0.98);
 }
 
 .btn-audio-record-hold {
     background: var(--surface);
-    color: var(--primary);
-    border: 1.5px solid var(--primary);
+    color: var(--color-primary-strong);
+    border: 1.5px solid var(--color-primary-strong);
 }
 
 .btn-audio-record.recording {
     background: #e63946;
+    /* The base rule is now dark-on-celeste, so the red state states its own text. */
+    color: #fff;
     animation: pulse-recording 0.6s infinite;
 }
 
@@ -1825,8 +1849,8 @@ button, a, input {
     padding: 0.625rem 1rem;
     border: none;
     border-radius: 12px;
-    background: #009f95;
-    color: #fff;
+    background: var(--color-primary);
+    color: var(--color-on-primary);
     font: inherit;
     font-weight: 700;
     cursor: pointer;
@@ -1875,7 +1899,7 @@ button, a, input {
 }
 
 .countdown-number.done {
-    color: #009f95;
+    color: var(--color-primary-strong);
     font-size: 80px;
 }
 
@@ -1915,8 +1939,10 @@ button, a, input {
     opacity: 0.85;
 }
 
+/* On the dark rgba(0,0,0,.7) overlay, not on white: the light celeste is the
+   readable one here (the strong tone would sink into the backdrop). */
 .training-overlay-pct.done {
-    color: #009f95;
+    color: var(--color-primary);
     font-size: 80px;
 }
 
@@ -1937,7 +1963,7 @@ button, a, input {
 }
 
 .sample-progress-fill.ready {
-    background: var(--primary);
+    background: var(--color-primary-strong);
 }
 
 @media (max-width: 1023px) and (orientation: portrait) {
@@ -2106,7 +2132,7 @@ button, a, input {
 }
 .makecode-fallback-card h3 {
     margin: 0 0 12px;
-    color: #009f95;
+    color: var(--color-primary-strong);
     font-size: 1.25rem;
     font-weight: 700;
 }
@@ -2127,14 +2153,14 @@ button, a, input {
     align-items: center;
     justify-content: space-between;
     padding: 8px 14px;
-    background: #009f95;
+    background: var(--color-primary);
     flex-shrink: 0;
 }
 
 .training-classes-title {
     font-size: 15px;
     font-weight: 700;
-    color: #fff;
+    color: var(--color-on-primary);
     margin: 0;
 }
 
@@ -2142,8 +2168,8 @@ button, a, input {
 .add-class-header-btn {
     width: 100%;
     background: #fff;
-    border: 1.5px dashed var(--primary);
-    color: var(--primary);
+    border: 1.5px dashed var(--color-primary-strong);
+    color: var(--color-primary-strong);
     padding: 10px 14px;
     min-height: 44px;
     border-radius: 12px;
@@ -2157,11 +2183,13 @@ button, a, input {
 }
 
 .add-class-header-btn:hover {
-    background: #e1f5ee;
+    background: var(--color-primary-soft);
+    color: var(--color-primary-strong-hover);
 }
 
 .add-class-header-btn:active {
-    background: #cbeade;
+    background: var(--color-primary-soft);
+    color: var(--color-primary-strong-hover);
 }
 
 /* ===== Modal: Probar modelo ===== */
@@ -2198,7 +2226,7 @@ button, a, input {
     padding: 0 18px;
     display: flex;
     align-items: center;
-    background: #009f95;
+    background: var(--color-primary);
     flex-shrink: 0;
 }
 
@@ -2206,12 +2234,13 @@ button, a, input {
     font-size: 15px;
     font-weight: 700;
     margin: 0;
-    color: #fff;
+    color: var(--color-on-primary);
 }
 
 .preview-modal-subtitle {
     font-size: 12px;
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--color-on-primary);
+    opacity: 0.75;
     margin: 2px 0 0 0;
 }
 
@@ -2260,17 +2289,17 @@ button, a, input {
     flex-direction: column;
     background: #fff;
     border-radius: 14px;
-    border: 1px solid #d4ede9;
+    border: 1px solid var(--border);
     overflow: hidden;
     min-height: 0;
 }
 
 .preview-classes-card-header {
     padding: 10px 14px;
-    background: #009f95;
+    background: var(--color-primary);
     font-size: 13px;
     font-weight: 700;
-    color: #fff;
+    color: var(--color-on-primary);
     flex-shrink: 0;
 }
 
@@ -2281,7 +2310,7 @@ button, a, input {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    background: #f0faf9;
+    background: var(--color-primary-soft);
 }
 
 .preview-class-card {
@@ -2292,7 +2321,7 @@ button, a, input {
     gap: 6px;
     transition: border-color 0.15s;
     background: #fff;
-    border: 1px solid #d4ede9;
+    border: 1px solid var(--border);
     border-left: 3px solid transparent;
 }
 
@@ -2365,8 +2394,8 @@ button, a, input {
 }
 
 .preview-btn-primary {
-    background: #009f95;
-    color: white;
+    background: var(--color-primary);
+    color: var(--color-on-primary);
 }
 
 .preview-btn-secondary {
