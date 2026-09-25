@@ -13,7 +13,14 @@ function hasName(name) {
     return typeof name === 'string' && name.trim() !== '';
 }
 
-function sampleCount(count) {
+/**
+ * El conteo de muestras tal como lo cuentan estas reglas: entero, nunca
+ * negativo, y cero ante cualquier valor que no sea un número finito.
+ *
+ * Se exporta para que quien muestre el número en pantalla muestre el mismo que
+ * decide el estado, y no uno crudo que pueda contradecirlo.
+ */
+export function normalizeSampleCount(count) {
     return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
 }
 
@@ -40,7 +47,7 @@ export function getTrainingBlockers(classes) {
         if (!named) {
             blockers.push({ type: BLOCKER_MISSING_NAME, classIndex: i });
         }
-        const have = sampleCount(cls.count);
+        const have = normalizeSampleCount(cls.count);
         if (have < MIN_SAMPLES_PER_CLASS) {
             blockers.push({
                 type: BLOCKER_NOT_ENOUGH_SAMPLES,
@@ -52,6 +59,11 @@ export function getTrainingBlockers(classes) {
         }
     }
     return blockers;
+}
+
+/** True when a class has reached the per-class training minimum. */
+export function hasEnoughSamples(count) {
+    return normalizeSampleCount(count) >= MIN_SAMPLES_PER_CLASS;
 }
 
 /**
@@ -73,7 +85,7 @@ export function classesSignature(classes) {
     for (let i = 0; i < list.length; i++) {
         const cls = list[i] || {};
         const name = typeof cls.name === 'string' ? cls.name : '';
-        parts.push(`${name.length}:${name}:${sampleCount(cls.count)}`);
+        parts.push(`${name.length}:${name}:${normalizeSampleCount(cls.count)}`);
     }
     return parts.join('|');
 }
@@ -150,7 +162,7 @@ export function formatBlocker(blocker) {
                 : `La clase ${blocker.classIndex + 1}`;
             const noun = blocker.have === 1 ? 'muestra' : 'muestras';
             const missing = blocker.need - blocker.have;
-            return `${who} tiene ${blocker.have} ${noun}: faltan ${missing}.`;
+            return `${who} tiene ${blocker.have} ${noun}: faltan al menos ${missing}.`;
         }
         default:
             return '';

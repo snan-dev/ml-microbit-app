@@ -45,13 +45,23 @@
    celeste used AS text/border/icon on white uses --color-primary-strong.
    --color-primary alone fails contrast against white (1.96:1). */
 :root {
-    --color-primary: #5BC5F2;
-    --color-primary-hover: #2FB5EF;
-    --color-primary-active: #1CAFED;
+    --color-primary: #F2E63A;
+    --color-primary-hover: #EFE110;
+    --color-primary-active: #DCCF0F;
     --color-on-primary: #1D1D1B;
-    --color-primary-strong: #0D7BAA;
-    --color-primary-strong-hover: #0B678E;
-    --color-primary-soft: #E3F5FD;
+    --color-primary-strong: #1D1D1B;
+    --color-primary-strong-hover: #000000;
+    --color-primary-soft: #FDFBDE;
+    /* La zona de clases es amarilla aunque el color principal cambie: por eso
+       tiene token propio y no reusa --color-primary-soft. */
+    --color-classes-bg: #FDFBDE;
+    --color-sample-pending-bg: #E5E7EB;
+    --color-sample-pending-text: #374151;
+    /* El relleno gris da 1,09:1 contra el header amarillo de la tarjeta: sin
+       borde el indicador pendiente se lee como texto suelto, no como chip. */
+    --color-sample-pending-border: #C9CDD3;
+    --color-sample-complete-bg: #2E7D32;
+    --color-sample-complete-text: #FFFFFF;
 }
 
 /* ============================================
@@ -975,13 +985,25 @@ button, a, input {
     flex-shrink: 0;
 }
 
+/* Indicador de muestras: gris mientras falten para el mínimo de entrenamiento,
+   verde (con ✓ en el texto) al alcanzarlo. */
 .sample-badge {
     font-size: 0.75rem;
-    font-weight: 600;
+    font-weight: 700;
     padding: 2px 8px;
     border-radius: 6px;
     white-space: nowrap;
     user-select: none;
+    background: var(--color-sample-pending-bg);
+    color: var(--color-sample-pending-text);
+    border: 1px solid var(--color-sample-pending-border);
+    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.sample-badge--complete {
+    background: var(--color-sample-complete-bg);
+    color: var(--color-sample-complete-text);
+    border-color: var(--color-sample-complete-bg);
 }
 
 
@@ -1009,7 +1031,8 @@ button, a, input {
     align-items: center;
     justify-content: center;
     gap: 6px;
-    min-height: 40px;
+    /* CLAUDE.md: touch targets >= 44x44. */
+    min-height: 44px;
     user-select: none;
     -webkit-user-select: none;
     touch-action: manipulation;
@@ -1031,9 +1054,14 @@ button, a, input {
     filter: brightness(0.9);
 }
 
+/* El relleno lo pone el color de la clase por estilo inline (btnFill). Con el
+   amarillo de marca el texto blanco desaparecía: va el negro de marca.
+   Y el borde, por lo mismo que #trainBtn y .btn-pred-connect: un relleno claro
+   de marca sobre el cuerpo claro de la tarjeta da 1,30:1, así que sin borde el
+   botón pierde silueta. El borde es lo que lo hace leer como botón. */
 .btn-capture-hold-unified {
-    color: white;
-    border: none;
+    color: var(--color-on-primary);
+    border: 1.5px solid var(--color-primary-strong);
 }
 
 .btn-capture-hold-unified:active {
@@ -1045,7 +1073,8 @@ button, a, input {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: white;
+    /* Mismo motivo que el texto de .btn-capture-hold-unified. */
+    background: var(--color-on-primary);
     opacity: 0.85;
     flex-shrink: 0;
 }
@@ -1450,7 +1479,9 @@ button, a, input {
     flex-direction: column;
     gap: 0.75rem;
     padding: 10px;
-    background: var(--color-primary-soft);
+    /* Zona de tarjetas de clases: amarillo claro propio (ver --color-classes-bg).
+       Las tarjetas se distinguen por su borde, que ya tienen. */
+    background: var(--color-classes-bg);
     scrollbar-width: thin;
 }
 
@@ -1944,26 +1975,6 @@ button, a, input {
 .training-overlay-pct.done {
     color: var(--color-primary);
     font-size: 80px;
-}
-
-/* Sample progress bar (all trainers) */
-.sample-progress-wrap {
-    height: 4px;
-    background: #e0e0e0;
-    border-radius: 2px;
-    overflow: hidden;
-    margin-bottom: 8px;
-}
-
-.sample-progress-fill {
-    height: 100%;
-    background: #EF9F27;
-    border-radius: 2px;
-    transition: width 0.3s, background-color 0.3s;
-}
-
-.sample-progress-fill.ready {
-    background: var(--color-primary-strong);
 }
 
 @media (max-width: 1023px) and (orientation: portrait) {

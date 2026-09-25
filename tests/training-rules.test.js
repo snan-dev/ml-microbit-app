@@ -7,6 +7,8 @@ import {
     BLOCKER_MISSING_NAME,
     BLOCKER_NOT_ENOUGH_SAMPLES,
     getTrainingBlockers,
+    hasEnoughSamples,
+    normalizeSampleCount,
     getBlockedClassIndices,
     formatBlocker,
     classesSignature,
@@ -218,4 +220,51 @@ test('classNamesDiverged is blind to sample counts, hasUntrainedChanges is not',
     assert.equal(classNamesDiverged(trained, classes), false);
     const signature = classesSignature([{ name: 'Gato', count: 8 }, { name: 'Perro', count: 8 }]);
     assert.equal(hasUntrainedChanges(signature, classes), true);
+});
+
+test('hasEnoughSamples: completa exactamente en el mínimo', () => {
+    assert.equal(hasEnoughSamples(MIN_SAMPLES_PER_CLASS - 1), false);
+    assert.equal(hasEnoughSamples(MIN_SAMPLES_PER_CLASS), true);
+    assert.equal(hasEnoughSamples(MIN_SAMPLES_PER_CLASS + 5), true);
+});
+
+test('hasEnoughSamples: los conteos inválidos no están completos', () => {
+    for (const count of [0, undefined, null, NaN, -8, '8', Infinity]) {
+        assert.equal(hasEnoughSamples(count), false, String(count));
+    }
+});
+
+// El indicador verde y el panel de motivos no pueden contradecirse: si el badge
+// está verde, el panel no puede decir que a esa clase le faltan muestras.
+test('hasEnoughSamples coincide con getTrainingBlockers', () => {
+    for (let count = 0; count <= MIN_SAMPLES_PER_CLASS + 1; count++) {
+        const blockers = getTrainingBlockers([
+            { name: 'A', count: MIN_SAMPLES_PER_CLASS },
+            { name: 'B', count },
+        ]);
+        const blocksOnSamples = blockers.some(
+            b => b.type === BLOCKER_NOT_ENOUGH_SAMPLES && b.classIndex === 1,
+        );
+        assert.equal(hasEnoughSamples(count), !blocksOnSamples, String(count));
+    }
+});
+
+test('normalizeSampleCount: entero, nunca negativo, cero ante basura', () => {
+    assert.equal(normalizeSampleCount(8), 8);
+    assert.equal(normalizeSampleCount(8.7), 8);
+    for (const count of [0, undefined, null, NaN, -8, '8', Infinity]) {
+        assert.equal(normalizeSampleCount(count), 0, String(count));
+    }
+});
+
+// El indicador pinta el número que devuelve el normalizador, no el crudo: si
+// discreparan, podría verse "8 muestras" en gris.
+test('normalizeSampleCount y hasEnoughSamples no pueden discrepar', () => {
+    for (const count of [7, 8, 8.9, '8', NaN, -1, undefined]) {
+        assert.equal(
+            hasEnoughSamples(count),
+            normalizeSampleCount(count) >= MIN_SAMPLES_PER_CLASS,
+            String(count),
+        );
+    }
 });

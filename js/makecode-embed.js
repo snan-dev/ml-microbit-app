@@ -7,7 +7,11 @@
      * Each iframe has its own message handler stored in `messageHandlers`.
      */
 
-    import { deriveEnumIdentifiers, stripUnsafeChars } from './class-name.js';
+    import {
+        generateTmClassesTs,
+        generateStarterMainTs,
+        generateStarterMainBlocks
+    } from './makecode-template.js';
 
     const MAKECODE_URL = "https://makecode.microbit.org/v9.0.12";
 
@@ -25,32 +29,6 @@
 
     // Map of iframeId → last openMakeCode params (for retry)
     const lastCallParams = {};
-
-    function generateTmClassesTs(classNames) {
-        // Identifiers are derived and de-duplicated: a class name is user input
-        // and need not be a valid (nor unique) TypeScript identifier.
-        //
-        // Names go through stripUnsafeChars() before being interpolated:
-        // defence in depth, a no-op for well-formed input, the same guard
-        // formatUartMessage() applies at its own point of use. JSON.stringify()
-        // escapes quotes and backslashes but NOT U+2028/U+2029, which are line
-        // terminators in the ECMAScript grammar — one of them inside a name
-        // ends the `//% block=` line mid-string and the generated file stops
-        // being valid TypeScript.
-        //
-        // It used to be enough that names were normalized where they are
-        // stored. The rehydration boundary no longer guarantees that, on
-        // purpose: normalizing there would orphan the samples of an audio
-        // project, where the class name is the key the recognizer indexes them
-        // by. So each point of use guards itself.
-        const safeNames = classNames.map(stripUnsafeChars);
-        const identifiers = deriveEnumIdentifiers(safeNames);
-        const enumMembers = safeNames.map((name, i) => {
-            return `    //% block=${JSON.stringify(name)}\n    ${identifiers[i]} = ${i}`;
-        });
-        const arrayItems = safeNames.map(n => JSON.stringify(n)).join(', ');
-        return `enum TMClase {\n${enumMembers.join(',\n')}\n}\nnamespace iaMachine {\n    export const _tmClaseNombres = [${arrayItems}];\n    //% blockId=tm_clase_picker\n    //% block="$clase"\n    //% blockHidden=true\n    //% shim=TD_ID\n    export function tmClasePicker(clase: TMClase): number {\n        return clase;\n    }\n}\n`;
-    }
 
     function isPlainMakeCodeProject(value) {
         return (
@@ -88,10 +66,15 @@
         const pxtJson = JSON.stringify({
             "name": projectName || "proyecto-ml",
             "description": "Proyecto con ML - micro:bit",
+            // Respaldo declarativo del editor de bloques. Lo que de verdad
+            // fuerza bloques es que `main.blocks` tenga contenido: pxt manda
+            // al editor de JavaScript cuando está vacío, antes de mirar este
+            // campo. No alcanza con esto solo — ver generateStarterMainBlocks().
+            "preferredEditor": "blocksprj",
             "dependencies": {
                 "core": "*",
                 "bluetooth": "*",
-                "pxt-tm-microbit-link": "github:snan-microbit/pxt-tm-microbit-link-v2#3a8e11f4f045ef8dcd81103c5fa7a33698a2c0da"
+                "pxt-tm-microbit-link": "github:snan-microbit/pxt-tm-microbit-link-v2#34bf36a5aeda10ed2d8e12197332d1b707ca6b39"
             }, 
             "files": ["main.blocks", "main.ts", "tm-classes.ts", "README.md"],
             "yotta": { "config": { "microbit-dal": { "bluetooth": { "open": 1 } } } }
@@ -99,8 +82,11 @@
 
         return {
             text: {
-                "main.blocks": '<xml xmlns="http://www.w3.org/1999/xhtml">\n  <variables></variables>\n</xml>',
-                "main.ts": "// Programá tu micro:bit acá\n",
+                // Los bloques van como XML, no vacíos para que MakeCode
+                // decompile el main.ts: un main.blocks sin contenido fuerza el
+                // editor de JavaScript. Ver generateStarterMainBlocks().
+                "main.blocks": generateStarterMainBlocks(classNames),
+                "main.ts": generateStarterMainTs(classNames),
                 "tm-classes.ts": tmClassesTs,
                 "README.md": " ",
                 "pxt.json": pxtJson

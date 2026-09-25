@@ -31,7 +31,7 @@ export const TRAINER_CONFIGS = {
     image: {
         captureMode: 'webcam',
         captureOneLabel: 'Capturar',
-        captureHoldLabel: 'Grabar',
+        captureHoldLabel: 'Ráfaga',
         captureIcon: ICON_CAMERA,
         fixedFirstClass: null,
         showProgressBar: true,
@@ -42,7 +42,7 @@ export const TRAINER_CONFIGS = {
     pose: {
         captureMode: 'webcam-skeleton',
         captureOneLabel: 'Capturar',
-        captureHoldLabel: 'Grabar',
+        captureHoldLabel: 'Ráfaga',
         captureIcon: ICON_CAMERA,
         fixedFirstClass: null,
         showProgressBar: true,

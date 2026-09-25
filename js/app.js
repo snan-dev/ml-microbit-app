@@ -24,7 +24,8 @@ import {
 } from './class-name.js';
 import {
     MIN_CLASSES,
-    MIN_SAMPLES_PER_CLASS,
+    hasEnoughSamples,
+    normalizeSampleCount,
     getTrainingBlockers,
     getBlockedClassIndices,
     formatBlocker,
@@ -122,13 +123,29 @@ let previewWebcam = null;
 let previewLoopRunning = false;
 let previewAudioVisualizerCanvas = null;
 
+// Colores de la tarjeta de clase. `getClassColor()` devuelve siempre el
+// primero, así que hoy solo el [0] se ve; los otros cinco quedan como estaban,
+// a la espera de la decisión sobre si la paleta por clase se usa de verdad.
+//
+// El [0] es la familia del amarillo de marca:
+//   bg          tinte más profundo que --color-classes-bg, para que la tarjeta
+//               se despegue del fondo de la zona de clases (que es #FDFBDE).
+//   dot/icon    oliva oscuro de la misma familia. No puede ser el amarillo de
+//               marca: `dot` también rellena las barras de confianza del modal
+//               de prueba Y el borde de la tarjeta ganadora, sobre un riel
+//               #f0f0f0 donde el amarillo da 1,2:1. Contra el header da
+//               4,8:1; contra el riel, 4,7:1; contra blanco, 5,4:1.
+//   btnFill     el amarillo de marca, con texto --color-on-primary (13:1).
+//   headerText  el negro de marca sobre el tinte: 14,9:1.
+// `badgeText` se eliminó: el indicador de muestras dejó de pintarse con el
+// color de la clase y nadie más lo leía.
 const CLASS_COLORS = [
-    { bg: '#E1F5EE', dot: '#1D9E75', btnFill: '#1D9E75', badge: '#9FE1CB', badgeText: '#0F6E56', headerText: '#085041', icon: '#0F6E56' },
-    { bg: '#E6F1FB', dot: '#378ADD', btnFill: '#378ADD', badge: '#B5D4F4', badgeText: '#185FA5', headerText: '#0C447C', icon: '#185FA5' },
-    { bg: '#FAECE7', dot: '#D85A30', btnFill: '#D85A30', badge: '#F5C4B3', badgeText: '#993C1D', headerText: '#712B13', icon: '#993C1D' },
-    { bg: '#EEEDFE', dot: '#7F77DD', btnFill: '#7F77DD', badge: '#CECBF6', badgeText: '#534AB7', headerText: '#3C3489', icon: '#534AB7' },
-    { bg: '#FBEAF0', dot: '#D4537E', btnFill: '#D4537E', badge: '#F4C0D1', badgeText: '#993556', headerText: '#72243E', icon: '#993556' },
-    { bg: '#FAEEDA', dot: '#BA7517', btnFill: '#BA7517', badge: '#FAC775', badgeText: '#854F0B', headerText: '#633806', icon: '#854F0B' },
+    { bg: '#FAF3B0', dot: '#7A6A00', btnFill: '#F2E63A', badge: '#E8DFA0', headerText: '#1D1D1B', icon: '#7A6A00' },
+    { bg: '#E6F1FB', dot: '#378ADD', btnFill: '#378ADD', badge: '#B5D4F4', headerText: '#0C447C', icon: '#185FA5' },
+    { bg: '#FAECE7', dot: '#D85A30', btnFill: '#D85A30', badge: '#F5C4B3', headerText: '#712B13', icon: '#993C1D' },
+    { bg: '#EEEDFE', dot: '#7F77DD', btnFill: '#7F77DD', badge: '#CECBF6', headerText: '#3C3489', icon: '#534AB7' },
+    { bg: '#FBEAF0', dot: '#D4537E', btnFill: '#D4537E', badge: '#F4C0D1', headerText: '#72243E', icon: '#993556' },
+    { bg: '#FAEEDA', dot: '#BA7517', btnFill: '#BA7517', badge: '#FAC775', headerText: '#633806', icon: '#854F0B' },
 ];
 
 function getClassColor(index) {
@@ -1015,6 +1032,30 @@ function renderTrainingPredictions(predictions) {
     }
 }
 
+/**
+ * Sample-count badge: gray below the training minimum, green once reached.
+ *
+ * El tilde mantiene legible el estado sin depender solo del color: un
+ * proyector lavado o una pantalla mala igual muestran el cambio.
+ */
+function paintSampleCount(badge, count) {
+    if (!badge) return;
+    // El número que se muestra sale del mismo normalizador que decide el
+    // estado: si no, un conteo raro podría pintar gris y escribir "8".
+    const n = normalizeSampleCount(count);
+    const complete = hasEnoughSamples(count);
+    const noun = n === 1 ? 'muestra' : 'muestras';
+    badge.classList.toggle('sample-badge--complete', complete);
+    badge.textContent = complete ? `✓ ${n} ${noun}` : `${n} ${noun}`;
+    // role="img" en el propio span: sobre un span genérico el aria-label puede
+    // ignorarse, y así el lector lee el estado en palabras en vez del tilde.
+    // Sin live region a propósito: durante la captura sostenida esto se
+    // repinta varias veces por segundo y anunciaría cada muestra.
+    badge.setAttribute('aria-label', complete
+        ? `${n} ${noun}, suficientes para entrenar`
+        : `${n} ${noun}, faltan para entrenar`);
+}
+
 function updateClassUI(classIndex) {
     const card = document.querySelector(`#trainingClassesList [data-index="${classIndex}"]`);
     if (!card) return;
@@ -1022,18 +1063,10 @@ function updateClassUI(classIndex) {
     const c = t.getClasses()[classIndex];
     if (!c) return;
 
-    const badge = card.querySelector('.sample-badge');
-    if (badge) badge.textContent = `${c.count} muestras`;
+    paintSampleCount(card.querySelector('.sample-badge'), c.count);
 
     const nameInput = card.querySelector('.class-name-input');
     if (nameInput) autoSizeInput(nameInput);
-
-    // Progress bar (all trainers)
-    const fill = card.querySelector('.sample-progress-fill');
-    if (fill) {
-        fill.style.width = Math.min(100, (c.count / MIN_SAMPLES_PER_CLASS) * 100) + '%';
-        fill.classList.toggle('ready', c.count >= MIN_SAMPLES_PER_CLASS);
-    }
 
     const gallery = card.querySelector('.sample-gallery');
     if (gallery) {
@@ -1205,12 +1238,6 @@ function renderTrainingClasses() {
         const color = getClassColor(i);
         const samples = t.getSamples(i);
         const isFixed = config.fixedFirstClass && i === 0;
-        const pct = Math.min(100, (c.count / MIN_SAMPLES_PER_CLASS) * 100);
-
-        const progressBarHTML = config.showProgressBar ? `
-                <div class="sample-progress-wrap">
-                    <div class="sample-progress-fill${c.count >= MIN_SAMPLES_PER_CLASS ? ' ready' : ''}" style="width:${pct}%"></div>
-                </div>` : '';
 
         const menuHTML = isFixed ? '' : `
                     <div class="class-menu-wrapper">
@@ -1246,19 +1273,19 @@ function renderTrainingClasses() {
                         style="color:${color.headerText};" ${isFixed ? 'disabled' : ''}>
                     ${isFixed ? '' : '<span class="class-name-counter" hidden></span>'}
                     ${isFixed ? '' : `<svg class="pencil-edit-icon" width="12" height="12" viewBox="0 0 16 16" fill="none"
-                        stroke="${color.headerText}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-                        style="opacity: 0.45; flex-shrink: 0; cursor: pointer;">
+                        stroke="${color.icon}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                        style="opacity: 0.9; flex-shrink: 0; cursor: pointer;">
                         <path d="M11.5 1.5l3 3L5 14H2v-3z"/><path d="M9.5 3.5l3 3"/>
                     </svg>`}
                 </div>
                 <div class="class-card-header-right">
-                    <span class="sample-badge" data-index="${i}"
-                        style="background:${color.badge}; color:${color.badgeText};">${c.count} muestras</span>
+                    <!-- Sin color de clase inline: el badge se pinta gris/verde
+                         según el mínimo, y paintSampleCount() escribe su texto. -->
+                    <span class="sample-badge" role="img"></span>
                     ${menuHTML}
                 </div>
             </div>
             <div class="class-card-body">
-                ${progressBarHTML}
                 <div class="class-capture-buttons">
                     <button class="btn-capture-one-unified" data-index="${i}" style="background:${color.bg}; color:${color.headerText}; border-color:${color.badge};">
                         ${config.captureIcon}
@@ -1280,6 +1307,13 @@ function renderTrainingClasses() {
             </div>
         </div>`;
     }).join('');
+
+    // El índice sale de la tarjeta, no del orden del recorrido: así el badge
+    // no se desalinea si alguna clase no generó tarjeta.
+    container.querySelectorAll('.training-class-card').forEach(card => {
+        const i = Number(card.dataset.index);
+        paintSampleCount(card.querySelector('.sample-badge'), cls[i]?.count ?? 0);
+    });
 
     // Thumbs come from IndexedDB (user input): assign src as a property,
     // never interpolate them into the HTML template.
