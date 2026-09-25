@@ -111,11 +111,11 @@ test('formatBlocker texts', () => {
     );
     assert.equal(
         formatBlocker({ type: BLOCKER_NOT_ENOUGH_SAMPLES, classIndex: 0, name: 'Gato', have: 3, need: 8 }),
-        '«Gato» tiene 3 muestras: faltan 5.',
+        '«Gato» tiene 3 muestras: faltan al menos 5.',
     );
     assert.equal(
         formatBlocker({ type: BLOCKER_NOT_ENOUGH_SAMPLES, classIndex: 1, name: '', have: 1, need: 8 }),
-        'La clase 2 tiene 1 muestra: faltan 7.',
+        'La clase 2 tiene 1 muestra: faltan al menos 7.',
     );
     assert.equal(formatBlocker({ type: 'unknown' }), '');
 });
